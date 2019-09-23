@@ -18,6 +18,9 @@
 # Required packages: argparser                                                #
 #                    stringr                                                  #
 #                                                                             #
+# Release date: 2019-09-23                                                    #
+#      Version: 1.1                                                          #
+#                                                                             #
 ###############################################################################
 # Package currently supports the following parameters:
 #
@@ -63,6 +66,7 @@ print(result)
 #                                                                             #
 ###############################################################################
 
+
 ###############################################################################
 ####### Load libraries etc.
 ###############################################################################
@@ -77,10 +81,26 @@ MIN_GOOD_PEPTIDE_LENGTH <- 11
 #############################################################
 ####### General purpose functions
 #############################################################
+# Creates a more useful error report when file is not reasonable
+safe_file_exists <- function(file_path){ # Still not particularly useful in cases where it is a valid directory
+  tryCatch(
+    return(file.exists(file_path)),
+    error=function(e) {simpleError(sprintf("file path is not valid: '%s'", file_path))}
+  )
+}
 # My standard way of loading data into data.frames
 load_standard_df <- function(file_path=NULL){
-  if (file.exists(file_path)){
+  clean_field_names = function(field_names){
+    result <- field_names
+    idx_blank <- which(result == "")
+    result[idx_blank] <- sprintf("<Field %d>", idx_blank)
+    return(result)
+  }
+  if (safe_file_exists(file_path)){
+    field_names <- read_field_names(file_path, sep = "\t")
+    field_names <- clean_field_names(field_names)
     data <- read.table(file = file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, blank.lines.skip = TRUE)#, check.names = FALSE)
+    colnames(data) = field_names
   } else {
     stop(sprintf("File path does not exist: '%s'", file_path))
   }
@@ -195,7 +215,13 @@ verified_element_of_list <- function(parent_list=NULL, element_name=NULL, object
   }
   return(parent_list[[element_name]])
 }
-
+read_field_names = function(file_path=NULL, sep = "\t"){
+  con = file(file_path,"r")
+  fields = readLines(con, n=1)
+  close(con)
+  fields = strsplit(x = fields, split = sep)[[1]]
+  return(fields)
+}
 #############################################################
 ####### Classes for Data
 #############################################################
@@ -206,12 +232,15 @@ verified_element_of_list <- function(parent_list=NULL, element_name=NULL, object
 Data_Object <- setRefClass("Data_Object", 
                            fields =list(m_is_dirty = "logical",
                                         parents    = "list",
-                                        children   = "list"))
+                                        children   = "list", 
+                                        class_name = "character"))
 Data_Object$methods(
   initialize = function(){
     m_is_dirty <<- TRUE
+    class_name <<- "Data_Object <abstract class - class_name needs to be set in subclass>"
   },
   load_data = function(){
+    #print(sprintf("Calling %s$load_data()", class_name)) # Useful for debugging
     ensure_parents()
     m_load_data()
     set_dirty(new_value = FALSE)
@@ -238,6 +267,7 @@ Data_Object$methods(
   },
   ensure_parents = function(){
     for (parent in parents){
+      # print(sprintf("Calling %s$ensure()", parent$class_name)) # Useful for debugging
       parent$ensure()
     }
   },
@@ -257,7 +287,11 @@ Data_Object_Info <- setRefClass("Data_Object_Info",
                                   data_file_name  = "character",
                                   data_path_name  = "character",
                                   experiment_name = "character",
-                                  designation     = "character"
+                                  designation     = "character",
+                                  
+                                  m_input_file_type = "character",
+                                  
+                                  score_field_name = "character"
                                   #collection_name="character",
                                   #dir_results="character",
                                   #dir_dataset="character",
@@ -267,6 +301,10 @@ Data_Object_Info <- setRefClass("Data_Object_Info",
                                   #experiment_name="character"
                                 ) )
 Data_Object_Info$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Info - <Abstract class - class_name needs to be set in subclass>"
+  },
   m_load_data = function(){
     
     # Nothing to do - this is really a data class
@@ -279,10 +317,11 @@ Data_Object_Info$methods(
     return(result)
   },
   file_path_1_percent_FDR = function(){
-    if (length(data_file_name_1_percent_FDR) == 0){
+    local_file_name <- get_data_file_name_1_percent_FDR()
+    if (length(local_file_name) == 0){
       result <- ""
     } else {
-      result <- file.path(data_path_name, data_file_name_1_percent_FDR)
+      result <- file.path(data_path_name, local_file_name)
     }
     
     # Continue even if file name is missing - not all analyses have a 1 percent FDR file; this is managed downstream
@@ -292,9 +331,40 @@ Data_Object_Info$methods(
     # }
     return(result)
   },
+  get_data_file_name_1_percent_FDR = function(){
+    return(data_file_name_1_percent_FDR)
+  },
   collection_name = function(){
     result <- sprintf("%s_%s", experiment_name, designation)
     return(result)
+  },
+  get_field_name_of_score = function(){
+    if (length(score_field_name) == 0){
+      stop("score_field_name has not been set for this project")
+    }
+    return(score_field_name)
+  },
+  set_input_file_type = function(p_input_file_type=NULL){
+    if (p_input_file_type == "PSM_Report"){
+      # do nothing, for now
+    }
+    else if (p_input_file_type == "PMD_FDR_input_file"){
+      score_field_name <<- "PMD_FDR_input_score"
+    }
+    else {
+      stop(sprintf("input_file_type ('%s') is not currently supported - file_type not changed", p_input_file_type))
+    }
+    m_input_file_type <<- p_input_file_type
+  },
+  get_input_file_type = function(){
+    if (length(m_input_file_type) == 0){
+      stop("input_file_type has not been set yet (null string)")
+    }
+    if (m_input_file_type == ""){
+      stop("input_file_type has not been set yet")
+    }
+    
+    return(m_input_file_type)
   }
 )
 ###############################################################################
@@ -306,11 +376,15 @@ Data_Object_Info_737_two_step <- setRefClass("Data_Object_Info_737_two_step",
 Data_Object_Info_737_two_step$methods(
   initialize = function(){
     callSuper()
+    class_name                   <<- "Data_Object_Info_737_two_step"
+    score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- "737_NS_Peptide_Shaker_PSM_Report_Multi_Stage_Two_Step.tabular"
     data_file_name               <<- "737_NS_Peptide_Shaker_Extended_PSM_Report_Multi_Stage_Two_Step.tabular.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Oral_737_NS"
     designation                  <<- "two_step"
+    
+    set_input_file_type("PSM_Report")
     
     #data_collection_oral_737_NS_combined$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_CombinedDB.tabular"
     #data_collection_oral_737_NS_two_step$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_Multi_Stage_Two_Step.tabular"
@@ -327,11 +401,15 @@ Data_Object_Info_737_combined <- setRefClass("Data_Object_Info_737_combined",
 Data_Object_Info_737_combined$methods(
   initialize = function(){
     callSuper()
+    class_name                   <<- "Data_Object_Info_737_combined"
+    score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- "737_NS_Peptide_Shaker_PSM_Report_CombinedDB.tabular"
     data_file_name               <<- "737_NS_Peptide_Shaker_Extended_PSM_Report_CombinedDB.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Oral_737_NS"
     designation                  <<- "two_step"
+    
+    set_input_file_type("PSM_Report")
     
     #data_collection_oral_737_NS_combined$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_CombinedDB.tabular"
     #data_collection_oral_737_NS_two_step$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_Multi_Stage_Two_Step.tabular"
@@ -348,11 +426,16 @@ Data_Object_Pyrococcus_tr <- setRefClass("Data_Object_Pyrococcus_tr",
 Data_Object_Pyrococcus_tr$methods(
   initialize = function(){
     callSuper()
+    class_name                   <<- "Data_Object_Pyrococcus_tr"
+    score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- ""
     data_file_name               <<- "Pfu_traditional_Extended_PSM_Report.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Pyrococcus"
     designation                  <<- "tr"
+    
+    set_input_file_type("PSM_Report")
+    
   }
 )
 ###############################################################################
@@ -364,11 +447,16 @@ Data_Object_Mouse_Mutations <- setRefClass("Data_Object_Mouse_Mutations",
 Data_Object_Mouse_Mutations$methods(
   initialize = function(){
     callSuper()
+    class_name                   <<- "Data_Object_Mouse_Mutations"
+    score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- ""
     data_file_name               <<- "Combined_DB_Mouse_5PTM.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Mouse Mutations"
     designation                  <<- "combined_05"
+    
+    set_input_file_type("PSM_Report")
+    
   }
 )
 ###############################################################################
@@ -378,6 +466,10 @@ Data_Object_Raw_Data <- setRefClass("Data_Object_Raw_Data",
                                     contains = "Data_Object",
                                     fields =list(df = "data.frame"))
 Data_Object_Raw_Data$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Raw_Data"
+  },
   set_info = function(info){
     parents[["info"]] <<- info
   },
@@ -396,6 +488,10 @@ Data_Object_Raw_1_Percent <- setRefClass("Data_Object_Raw_1_Percent",
                                          contains = "Data_Object",
                                          fields =list(df = "data.frame"))
 Data_Object_Raw_1_Percent$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Raw_1_Percent"
+  },
   set_info = function(info){
     parents[["info"]] <<- info
   },
@@ -411,17 +507,68 @@ Data_Object_Raw_1_Percent$methods(
     } # Note that failing to load is a valid state for this file, leading to not is_dirty. BUGBUG: this could lead to problems if a good file appears later
   },
   exists = function(){
+    
     info <- get_info()
-    file_name <- info$file_path_1_percent_FDR()
-    if (length(file_name) == 0 ){ # variable not set
+    local_file_name <- info$get_data_file_name_1_percent_FDR() # Check file name not file path
+    
+    if (length(local_file_name) == 0 ){ # variable not set
       result = FALSE
-    } else if (file_name == ""){  # variable set to empty string
+    } else if (local_file_name == ""){  # variable set to empty string
       result = FALSE
     } else {
-      result = file.exists(info$file_path_1_percent_FDR())
+      result = safe_file_exists(info$file_path_1_percent_FDR())
     }
     
     return(result)
+  }
+)
+###############################################################################
+#            Class: Data_Object_Data_Converter
+###############################################################################
+Data_Object_Data_Converter <- setRefClass("Data_Object_Data_Converter", 
+                                          contains = "Data_Object",
+                                          fields =list(df = "data.frame"))
+Data_Object_Data_Converter$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Data_Converter"
+  },
+  m_load_data = function(){
+    info     <- get_info()
+    raw_data <- get_raw_data()
+    
+    file_type <- info$get_input_file_type()
+    
+    if (file_type == "PSM_Report"){
+      data_new <- raw_data$df
+      field_name_of_score <- info$get_field_name_of_score()
+      data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
+      data_new$PMD_FDR_PMD            <- data_new[, "Precursor m/z Error [ppm]"]
+      data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
+      data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
+      data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
+      
+      df <<- data_new
+    }
+    else if (file_type == "PMD_FDR_input_file"){
+      df <<- raw_data$df
+    }
+    else {
+      stop(sprintf("Input file type is not currently supported: '%s'", file_type))
+    }
+    
+  },
+  set_info = function(info){
+    parents[["info"]] <<- info
+  },
+  get_info = function(){
+    return(verified_element_of_list(parents, "info", "Data_Object_Data_Converter$parents"))
+  },
+  set_raw_data = function(raw_data){
+    parents[["raw_data"]] <<- raw_data
+  },
+  get_raw_data = function(){
+    return(verified_element_of_list(parents, "raw_data", "Data_Object_Data_Converter$parents"))
   }
 )
 ###############################################################################
@@ -431,6 +578,14 @@ Data_Object_Groupings <- setRefClass("Data_Object_Groupings",
                                      contains = "Data_Object",
                                      fields =list(df = "data.frame"))
 Data_Object_Groupings$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Groupings"
+  },
+  simplify_field_name = function(x=NULL){
+    result <- gsub(pattern = "PMD_FDR_", replacement = "", x = x)
+    return(result)
+  },
   m_load_data = function(){
     make_data_groups <- function(data_original=NULL){
       
@@ -452,23 +607,36 @@ Data_Object_Groupings$methods(
           return(data_new)
         }
         
-        #data_new <- rename_column(data_new, "Variable.Modifications"   , "ptm_list")
-        data_new <- rename_column(data_new, "Confidence...."           , "confidence")
-        data_new <- rename_column(data_new, "Precursor.m.z.Error..ppm.", "precursor_ppm")
-        #data_new <- rename_column(data_new, "Isotope.Number"           , "isotope_number")
-        #data_new <- rename_column(data_new, "m.z"                      , "m_z")
-        #data_new <- rename_column(data_new, "Measured.Charge"          , "charge")
-        data_new <- rename_column(data_new, "Spectrum.File"            , "spectrum_file")
-        data_new <- rename_column(data_new, "Protein.s."               , "proteins")
-        data_new <- rename_column(data_new, "Spectrum.Title"           , "spectrum_title")
+        info <- get_info()
+        info$ensure()
+        field_name_of_score <- info$get_field_name_of_score()
+        
+        # #data_new <- rename_column(data_new, "Variable Modifications"   , "ptm_list")
+        # data_new <- rename_column(data_new, field_name_of_score        , "PMD_FDR_input_score")
+        # data_new <- rename_column(data_new, "Precursor m/z Error [ppm]", "PMD_FDR_PMD")
+        # #data_new <- rename_column(data_new, "Isotope Number"           , "isotope_number")
+        # #data_new <- rename_column(data_new, "m/z"                      , "m_z")
+        # #data_new <- rename_column(data_new, "Measured Charge"          , "charge")
+        # data_new <- rename_column(data_new, "Spectrum File"            , "PMD_FDR_spectrum_file")
+        # data_new <- rename_column(data_new, "Protein(s)"               , "PMD_FDR_proteins")
+        # data_new <- rename_column(data_new, "Spectrum Title"           , "PMD_FDR_spectrum_title")
+        # data_new <- manage_decoy_column(data_new)
+        
+        # Now managed in Data_Converter
+        # data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
+        # data_new$PMD_FDR_PMD            <- data_new[, "Precursor m/z Error [ppm]"]
+        # data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
+        # data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
+        # data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
+        
         data_new <- manage_decoy_column(data_new)
         
-        data_new$value          <- data_new$precursor_ppm
-        data_new$peptide_length <- str_length(data_new$Sequence)
+        data_new$value          <- data_new$PMD_FDR_PMD
+        data_new$PMD_FDR_peptide_length <- str_length(data_new$Sequence)
         #data_new$charge_value   <- with(data_new, as.numeric(substr(charge, start=1, stop=str_length(charge)-1)))
         #data_new$measured_mass  <- with(data_new, m_z*charge_value)
-        data_new$spectrum_index <- NA
-        data_new$spectrum_index[order(data_new$spectrum_title, na.last = TRUE)] <- 1:nrow(data_new)
+        data_new$PMD_FDR_spectrum_index <- NA
+        data_new$PMD_FDR_spectrum_index[order(data_new$PMD_FDR_spectrum_title, na.last = TRUE)] <- 1:nrow(data_new)
         
         return(data_new)
       }
@@ -498,11 +666,10 @@ Data_Object_Groupings$methods(
           return(group)
         }
         merge_group_with_data <- function(data_groups = NULL, group = NULL, vec = NULL, field_name_to_group = NULL){
-          field_name_new <- sprintf("group_%s", field_name_to_group)
+          field_name_new <- sprintf("group_%s", simplify_field_name(field_name_to_group))
           group_idx      <- findInterval(x = data_groups[,field_name_to_group], 
                                          vec = vec, 
                                          all.inside=TRUE)
-          
           data_groups$new_var <- group$new_var[group_idx]
           data_groups         <- rename_column(data_groups, "new_var", field_name_new)
         }
@@ -523,7 +690,7 @@ Data_Object_Groupings$methods(
       }
       add_already_grouped_variable <- function(field_name_to_group = NULL, data_groups = NULL ){
         old_name <- field_name_to_group
-        new_name <- sprintf("group_%s", old_name)
+        new_name <- sprintf("group_%s", simplify_field_name(old_name))
         df_new <- data_groups
         df_new[[new_name]] <- data_groups[[old_name]]
         
@@ -542,19 +709,20 @@ Data_Object_Groupings$methods(
         data_new <- data_groups
         df_group_def <- data.frame(stringsAsFactors = FALSE,
                                    list(pattern    = c(""     , "pfu_"      , "cRAP"),
-                                        group_name = c("human", "pyrococcus", "trash")))
+                                        group_name = c("human", "pyrococcus", "contaminant")))
         for (i in 1:nrow(df_group_def)){
           idx <- grepl(pattern = df_group_def$pattern[i],
-                       x       = data_new$proteins)
+                       x       = data_new$PMD_FDR_proteins)
           data_new$group_proteins[idx] <- df_group_def$group_name[i]
         }
         
-        data_new <- add_group_decoy(data_groups = data_new, field_name_to_group = "proteins")
+        data_new <- add_group_decoy(data_groups = data_new, field_name_to_group = "PMD_FDR_proteins")
         return(data_new)
       }
       add_group_decoy <- function(data_groups=NULL, field_name_to_group=NULL){
-        field_name_decoy <- sprintf("group_decoy_%s", field_name_to_group)
-        field_name_group <- sprintf("group_%s",       field_name_to_group)
+        simple_field_name <- simplify_field_name(field_name_to_group)
+        field_name_decoy <- sprintf("group_decoy_%s", simple_field_name)
+        field_name_group <- sprintf("group_%s",       simple_field_name)
         
         data_groups[[field_name_decoy]] <- with(data_groups, ifelse(decoy, "decoy", data_groups[[field_name_group]]))
         
@@ -563,10 +731,10 @@ Data_Object_Groupings$methods(
       add_group_training_class <- function(data_groups = NULL){
         df_new <- data_groups
         
-        lowest_confidence_group <- min(data_groups$group_confidence)
+        lowest_confidence_group <- min(data_groups$group_input_score)
         
-        is_long_enough   <- with(df_new, (peptide_length >= MIN_GOOD_PEPTIDE_LENGTH)    )
-        is_good          <- with(df_new, (decoy == 0) & (confidence == 100)             )
+        is_long_enough   <- with(df_new, (PMD_FDR_peptide_length >= MIN_GOOD_PEPTIDE_LENGTH)    )
+        is_good          <- with(df_new, (decoy == 0) & (PMD_FDR_input_score == 100)             )
         is_bad           <- with(df_new, (decoy == 1) )
         #is_used_to_train <- with(df_new, used_to_find_middle) # BUGBUG: circular definition
         
@@ -635,13 +803,13 @@ Data_Object_Groupings$methods(
             }
             
             # Main code of for get_cut_points()
-            max_idx = max(data_subset$spectrum_index)
-            data_sub_sub <- subset(data_subset, group_training_class == "good_training") #(confidence==100) & (decoy==0))
+            max_idx = max(data_subset$PMD_FDR_spectrum_index)
+            data_sub_sub <- subset(data_subset, group_training_class == "good_training") #(PMD_FDR_input_score==100) & (decoy==0))
             minimum_segment_length = 50
             
             values <- data_sub_sub$value
             n_values <- length(values)
-            local_to_global_idx <- data_sub_sub$spectrum_index
+            local_to_global_idx <- data_sub_sub$PMD_FDR_spectrum_index
             if (n_values <= minimum_segment_length){
               result <- c()
             } else {
@@ -660,24 +828,24 @@ Data_Object_Groupings$methods(
           
           breaks <- 1
           
-          files <- unique(df_new$spectrum_file)
+          files <- unique(df_new$PMD_FDR_spectrum_file)
           
           for (local_file in files){
-            data_subset <- subset(df_new, (spectrum_file==local_file))
+            data_subset <- subset(df_new, (PMD_FDR_spectrum_file==local_file))
             if (nrow(data_subset) > 0){
               breaks <- c(breaks, get_cut_points(data_subset))
             }
           }
           breaks <- sort(unique(breaks))
           breaks <- remove_last(breaks)
-          breaks <- c(breaks, max(df_new$spectrum_index + 1))
+          breaks <- c(breaks, max(df_new$PMD_FDR_spectrum_index + 1))
           
           return(breaks)
         }
         
         # Main code of add_group_spectrum_index()
         
-        field_name_to_group <- "spectrum_index"
+        field_name_to_group <- "PMD_FDR_spectrum_index"
         
         df_new <- data_groups[order(data_groups[[field_name_to_group]]),]
         breaks <- get_breaks_all(df_new)
@@ -708,8 +876,8 @@ Data_Object_Groupings$methods(
           
           # Get relevant fields
           df_1_percent$is_in_1percent <- TRUE
-          df_1_percent                <- rename_column(df_1_percent, "Spectrum.Title", "spectrum_title")
-          df_1_percent                <- df_1_percent[,c("spectrum_title", "is_in_1percent")]
+          df_1_percent                <- rename_column(df_1_percent, "Spectrum Title", "PMD_FDR_spectrum_title")
+          df_1_percent                <- df_1_percent[,c("PMD_FDR_spectrum_title", "is_in_1percent")]
           
           # Merge with data_groups
           data_new <- merge(data_new, df_1_percent, all.x=TRUE)
@@ -725,19 +893,19 @@ Data_Object_Groupings$methods(
       # Main code of make_data_groups()
       data_groups <- standardize_fields(data_original)
       
-      data_groups <- add_grouped_variable(field_name_to_group = "confidence", 
+      data_groups <- add_grouped_variable(field_name_to_group = "PMD_FDR_input_score", 
                                           data_groups         = data_groups, 
                                           vec.length.out      = 14, 
                                           vec.tolerance       = 1, 
                                           value_format        = "03d")
       
-      data_groups <- add_grouped_variable(field_name_to_group = "precursor_ppm", 
+      data_groups <- add_grouped_variable(field_name_to_group = "PMD_FDR_PMD", 
                                           data_groups         = data_groups, 
                                           vec.length.out      = 21, 
                                           vec.tolerance       = 0.1, 
                                           value_format        = "+05.1f")
       
-      data_groups <- add_grouped_variable(field_name_to_group = "peptide_length", 
+      data_groups <- add_grouped_variable(field_name_to_group = "PMD_FDR_peptide_length", 
                                           data_groups         = data_groups, 
                                           vec.length.out      = 11, 
                                           vec.tolerance       = 1, 
@@ -761,7 +929,7 @@ Data_Object_Groupings$methods(
       # data_groups <- add_already_grouped_variable(field_name_to_group = "charge",
       #                                             data_groups         = data_groups )
       # 
-      data_groups <- add_already_grouped_variable(field_name_to_group = "spectrum_file",
+      data_groups <- add_already_grouped_variable(field_name_to_group = "PMD_FDR_spectrum_file",
                                                   data_groups         = data_groups )
       data_groups <- add_protein_group(data_groups = data_groups)
       data_groups <- add_group_training_class(  data_groups = data_groups)
@@ -769,10 +937,10 @@ Data_Object_Groupings$methods(
       data_groups <- add_median_of_group_index( data_groups = data_groups)
       data_groups <- add_value_norm(            data_groups = data_groups)
       
-      # fields_of_interest <- c("confidence", "precursor_ppm", "m_z", "peptide_length", "isotope_number", "charge", "spectrum_file", "measured_mass", "spectrum_index", "proteins")
+      # fields_of_interest <- c("PMD_FDR_input_score", "PMD_FDR_PMD", "m_z", "PMD_FDR_peptide_length", "isotope_number", "charge", "PMD_FDR_spectrum_file", "measured_mass", "PMD_FDR_spectrum_index", "PMD_FDR_proteins")
       # fields_of_interest <- c("value", 
       #                         "decoy",
-      #                         "spectrum_title",
+      #                         "PMD_FDR_spectrum_title",
       #                         "median_of_group_index",
       #                         "value_norm",
       #                         "used_to_find_middle",
@@ -781,17 +949,17 @@ Data_Object_Groupings$methods(
       #                         sprintf("group_%s"      , fields_of_interest),
       #                         sprintf("group_decoy_%s", fields_of_interest))
       
-      fields_of_interest <- c("confidence", "precursor_ppm", "peptide_length", "spectrum_file", "spectrum_index", "proteins")
+      fields_of_interest <- c("PMD_FDR_input_score", "PMD_FDR_PMD", "PMD_FDR_peptide_length", "PMD_FDR_spectrum_file", "PMD_FDR_spectrum_index", "PMD_FDR_proteins")
       fields_of_interest <- c("value",
                               "decoy",
-                              "spectrum_title",
+                              "PMD_FDR_spectrum_title",
                               "median_of_group_index",
                               "value_norm",
                               "used_to_find_middle",
                               "group_training_class",
                               fields_of_interest,
-                              sprintf("group_%s"      , fields_of_interest),
-                              sprintf("group_decoy_%s", fields_of_interest))
+                              sprintf("group_%s"      , simplify_field_name(fields_of_interest)),
+                              sprintf("group_decoy_%s", simplify_field_name(fields_of_interest)))
       
       data_groups <- data_groups[,fields_of_interest]
       data_groups <- add_1_percent_to_data_groups(data_groups)
@@ -799,16 +967,22 @@ Data_Object_Groupings$methods(
       return(data_groups)
     }
     
-    data_original <- parents[[1]]$df
+    data_original <- get_data_converter()$df #parents[[INDEX_OF_ORIGINAL_DATA]]$df
     df <<- make_data_groups(data_original)
   },
-  set_raw_data = function(raw_data){
-    parents[["raw_data"]] <<- raw_data
+  set_info = function(info){
+    parents[["info"]] <<- info
   },
-  get_raw_data = function(){
-    return(verified_element_of_list(parents, "raw_data", "Data_Object_Groupings$parents"))
+  get_info = function(){
+    return(verified_element_of_list(parents, "info", "Data_Object_Groupings$parents"))
   },
-  set_raw_1_percent = function(raw_1_percent){
+  set_data_converter = function(data_converter){
+    parents[["data_converter"]] <<- data_converter
+  },
+  get_data_converter = function(){
+    return(verified_element_of_list(parents, "data_converter", "Data_Object_Groupings$parents"))
+  },
+  set_raw_1_percent = function(raw_1_percent){ ############## BUGBUG: the 1% file should be using the same file type format as the standard data (but isn't)
     parents[["raw_1_percent"]] <<- raw_1_percent
   },
   get_raw_1_percent = function(){
@@ -822,6 +996,10 @@ Data_Object_Individual_FDR <- setRefClass("Data_Object_Individual_FDR",
                                           contains = "Data_Object",
                                           fields =list(df = "data.frame"))
 Data_Object_Individual_FDR$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Individual_FDR"
+  },
   set_data_groups = function(parent){
     parents[["data_groups"]] <<- parent
   },
@@ -868,22 +1046,22 @@ Data_Object_Individual_FDR$methods(
       data_new$value_of_interest <- data_new[,field_value]
       data_new$group_of_interest <- data_new[,field_decoy_group]
       
-      data_subset <- subset(data_new, peptide_length >= 11)
+      data_subset <- subset(data_new, PMD_FDR_peptide_length >= 11)
       
-      # Identify mean confidence per group
+      # Identify mean PMD_FDR_input_score per group
       
-      group_confidence <- aggregate(confidence~group_of_interest, data=data_subset, FUN=mean)
-      group_confidence <- rename_column(group_confidence, "confidence", "group_confidence")
+      group_input_score <- aggregate(PMD_FDR_input_score~group_of_interest, data=data_subset, FUN=mean)
+      group_input_score <- rename_column(group_input_score, "PMD_FDR_input_score", "group_input_score")
       
       #group_fdr   <- get_group_fdr(data_groups = data_subset, densities=densities)
-      group_stats <- merge(alpha, group_confidence)
+      group_stats <- merge(alpha, group_input_score)
       group_stats <- subset(group_stats, group_of_interest != "decoy")
       
-      x=c(0,group_stats$group_confidence)
+      x=c(0,group_stats$group_input_score)
       y=c(1,group_stats$alpha)
       FUN_interp <- approxfun(x=x,y=y)
       
-      data_new$interpolated_groupwise_FDR <- FUN_interp(data_new$confidence)
+      data_new$interpolated_groupwise_FDR <- FUN_interp(data_new$PMD_FDR_input_score)
       if (set_decoy_to_1){
         data_new$interpolated_groupwise_FDR[data_new$decoy == 1] <- 1
       }
@@ -902,7 +1080,7 @@ Data_Object_Individual_FDR$methods(
                                     densities         = densities,
                                     alpha             = alpha,
                                     field_value       ="value_norm", 
-                                    field_decoy_group = "group_decoy_confidence")
+                                    field_decoy_group = "group_decoy_input_score")
     # Derive local t
     interp_t <- splinefun(x=d_true$x,  y=d_true$t) #approxfun(x=d_true$x, y=d_true$y)
     
@@ -926,6 +1104,10 @@ Data_Object_Densities <- setRefClass("Data_Object_Densities",
                                      contains = "Data_Object",
                                      fields =list(df = "data.frame"))
 Data_Object_Densities$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Densities"
+  },
   set_data_groups = function(parent=NULL){
     parents[["data_groups"]] <<- parent
   },
@@ -936,7 +1118,7 @@ Data_Object_Densities$methods(
     
     # Support functions for make_densities()
     set_values_of_interest <- function(){
-      field_decoy_group = "group_decoy_confidence"
+      field_decoy_group = "group_decoy_input_score"
       field_value       = "value_norm"
       new_data_groups <- get_data_groups()$df
       new_data_groups$value_of_interest <- new_data_groups[,field_value]
@@ -972,7 +1154,7 @@ Data_Object_Densities$methods(
       
       MIN_PEPTIDE_LENGTH = 11
       d <- with(subset(data_subset,  
-                       (peptide_length >= MIN_PEPTIDE_LENGTH) & 
+                       (PMD_FDR_peptide_length >= MIN_PEPTIDE_LENGTH) & 
                          (used_to_find_middle == FALSE)), 
                 density(value_of_interest, 
                         from = ylim[1], 
@@ -1031,6 +1213,10 @@ Data_Object_Alpha <- setRefClass("Data_Object_Alpha",
                                  contains = "Data_Object",
                                  fields =list(df = "data.frame"))
 Data_Object_Alpha$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Alpha"
+  },
   set_densities = function(parent=NULL){
     parents[["densities"]] <<- parent
   },
@@ -1060,13 +1246,14 @@ Data_Object_Alpha$methods(
 #            Class: Data_Processor
 ###############################################################################
 Data_Processor <- setRefClass("Data_Processor", 
-                              fields =list(info          = "Data_Object_Info",
-                                           raw_data      = "Data_Object_Raw_Data",
-                                           raw_1_percent = "Data_Object_Raw_1_Percent",
-                                           data_groups   = "Data_Object_Groupings",
-                                           densities     = "Data_Object_Densities",
-                                           alpha         = "Data_Object_Alpha",
-                                           i_fdr         = "Data_Object_Individual_FDR"))
+                              fields =list(info           = "Data_Object_Info",
+                                           raw_data       = "Data_Object_Raw_Data",
+                                           raw_1_percent  = "Data_Object_Raw_1_Percent",
+                                           data_converter = "Data_Object_Data_Converter",
+                                           data_groups    = "Data_Object_Groupings",
+                                           densities      = "Data_Object_Densities",
+                                           alpha          = "Data_Object_Alpha",
+                                           i_fdr          = "Data_Object_Individual_FDR"))
 Data_Processor$methods(
   initialize = function(p_info=NULL){
     if (! is.null(p_info)){
@@ -1086,11 +1273,19 @@ Data_Processor$methods(
     raw_1_percent$set_info(info)
     info$append_child(raw_1_percent)
     
+    # data_converter
+    data_converter$set_info    (info)
+    data_converter$set_raw_data(raw_data)
+    info         $append_child (data_converter)
+    raw_data     $append_child (data_converter)
+    
     # data_groups
-    data_groups$set_raw_data     (raw_data)
-    data_groups$set_raw_1_percent(raw_1_percent)
-    raw_data     $append_child   (data_groups)
-    raw_1_percent$append_child   (data_groups)
+    data_groups$set_info          (info)
+    data_groups$set_data_converter(data_converter)
+    data_groups$set_raw_1_percent (raw_1_percent)
+    info          $append_child   (data_groups)
+    data_converter$append_child   (data_groups)
+    raw_1_percent $append_child   (data_groups)
     
     # densities
     densities  $set_data_groups(data_groups)
@@ -1213,17 +1408,22 @@ Legend_Object$methods(
     } else {
       scale <<- p_scale
     }
-    user_params$lwd       <<- if_null(user_params$lwd      , NULL, user_params$lwd        * scale) # Because we allow NULL, scale must be inside parens
-    user_params$seg.len   <<- if_null(user_params$seg.len  ,    3, user_params$seg.len  ) * scale
-    user_params$box.lwd   <<- if_null(user_params$box.lwd  ,    1, user_params$box.lwd  ) * scale
-    user_params$x.intersp <<- if_null(user_params$x.intersp,  0.6, user_params$x.intersp) * scale
-    user_params$y.intersp <<- if_null(user_params$y.intersp,  0.4, user_params$y.intersp) * scale + 0.2
+    user_params$x         <<- if_null(user_params$x        , "topleft", user_params$x)
+    user_params$y         <<- if_null(user_params$y        ,      NULL, user_params$y)
+    user_params$bty       <<- if_null(user_params$bty      ,       "o", user_params$bty)
+    user_params$lwd       <<- if_null(user_params$lwd      ,      NULL, user_params$lwd        * scale) # Because we allow NULL, scale must be inside parens
+    user_params$seg.len   <<- if_null(user_params$seg.len  ,         3, user_params$seg.len  ) * scale
+    user_params$box.lwd   <<- if_null(user_params$box.lwd  ,         1, user_params$box.lwd  ) * scale
+    user_params$x.intersp <<- if_null(user_params$x.intersp,       0.6, user_params$x.intersp) * scale
+    user_params$y.intersp <<- if_null(user_params$y.intersp,       0.4, user_params$y.intersp) * scale + 0.2
   },
   show = function(){
-    first_legend = legend(x         = "topleft", 
+    first_legend = legend(x         = user_params$x,
+                          y         = user_params$y,
                           title     = "", 
                           legend    = user_params$leg, 
                           col       = user_params$col, 
+                          bty       = user_params$bty,
                           lty       = user_params$lty, 
                           lwd       = user_params$lwd, 
                           seg.len   = user_params$seg.len, 
@@ -1302,7 +1502,7 @@ Plot_Compare_PMD_and_Norm_Density$methods(
       from <- min(data_subset$value_of_interest)
       to   <- max(data_subset$value_of_interest)
       xlim = range(data_subset$value_of_interest)
-      data_true  <- subset(data_subset, (decoy==0) & (confidence==100))
+      data_true  <- subset(data_subset, (decoy==0) & (PMD_FDR_input_score==100))
       data_false <- subset(data_subset, (decoy==1))       
       d_true  <- with(data_true , density(value_of_interest, from = from, to = to))
       d_false <- with(data_false, density(value_of_interest, from = from, to = to))
@@ -1364,7 +1564,7 @@ Plot_Compare_PMD_and_Norm_Density$methods(
     data_groups <- data_processor$data_groups$df
     
     data_subset_a <- subset(data_groups  , used_to_find_middle == FALSE)
-    data_subset_b <- subset(data_subset_a, peptide_length > 11)
+    data_subset_b <- subset(data_subset_a, PMD_FDR_peptide_length > 11)
     
     densities_a <- get_densities(data_subset = data_subset_a, var_value = "value")
     densities_b <- get_densities(data_subset = data_subset_b, var_value = "value_norm")
@@ -1382,7 +1582,7 @@ Plot_Compare_PMD_and_Norm_Density$methods(
     data_processor <- data_processors[[1]]
     data_processor$data_groups$ensure()
     data_subset_a <- subset(data_processor$data_groups$df  , used_to_find_middle == FALSE)
-    data_subset_b <- subset(data_subset_a, peptide_length > 11)
+    data_subset_b <- subset(data_subset_a, PMD_FDR_peptide_length > 11)
     
     if (show_norm){
       data_subset <- data_subset_a
@@ -1390,7 +1590,7 @@ Plot_Compare_PMD_and_Norm_Density$methods(
       data_subset <- data_subset_b
     }
     
-    data_true  <- subset(data_subset, (decoy==0) & (confidence==100))
+    data_true  <- subset(data_subset, (decoy==0) & (PMD_FDR_input_score==100))
     data_false <- subset(data_subset, (decoy==1))       
     
     return(nrow(data_true) + nrow(data_false))
@@ -1459,7 +1659,7 @@ Plot_Time_Invariance_Alt$methods(
     field_name_text <- ifelse(field_of_interest=="value", "PMD", "Translated PMD")
     new_subset                   <- data_subset
     new_subset$value_of_interest <- new_subset[,field_of_interest]
-    new_subset                   <- new_subset[order(new_subset$spectrum_index),]
+    new_subset                   <- new_subset[order(new_subset$PMD_FDR_spectrum_index),]
     
     idxs <- round_to_tolerance(seq(from=1, to=nrow(new_subset), length.out = n_plot_groups+1), 1)
     idxs_left  <- idxs[-(n_plot_groups+1)]
@@ -1470,12 +1670,12 @@ Plot_Time_Invariance_Alt$methods(
     for (i in 1:n_plot_groups){
       new_subset$plot_group[idxs_left[i]:idxs_right[i]] <- i 
     }
-    xleft   <- aggregate(spectrum_index   ~plot_group, data=new_subset, FUN=min)
-    xright  <- aggregate(spectrum_index   ~plot_group, data=new_subset, FUN=max)
+    xleft   <- aggregate(PMD_FDR_spectrum_index   ~plot_group, data=new_subset, FUN=min)
+    xright  <- aggregate(PMD_FDR_spectrum_index   ~plot_group, data=new_subset, FUN=max)
     ybottom <- aggregate(value_of_interest~plot_group, data=new_subset, FUN=function(x){quantile(x, probs = 0.5 - (0.25/2))})
     ytop    <- aggregate(value_of_interest~plot_group, data=new_subset, FUN=function(x){quantile(x, probs = 0.5 + (0.25/2))})
-    boxes <- merge(            rename_column(xleft  , "spectrum_index"   , "xleft"),
-                               merge(      rename_column(xright , "spectrum_index"   , "xright"),
+    boxes <- merge(            rename_column(xleft  , "PMD_FDR_spectrum_index"   , "xleft"),
+                               merge(      rename_column(xright , "PMD_FDR_spectrum_index"   , "xright"),
                                            merge(rename_column(ybottom, "value_of_interest", "ybottom"),
                                                  rename_column(ytop   , "value_of_interest", "ytop"))))
     
@@ -1488,9 +1688,9 @@ Plot_Time_Invariance_Alt$methods(
       xlab=""
       ylab=""
     }
-    plot(value_of_interest~spectrum_index, data=new_subset, type="n", ylim=ylim, xlab = xlab, ylab=ylab, main=main, xaxt="n", yaxt="n")
+    plot(value_of_interest~PMD_FDR_spectrum_index, data=new_subset, type="n", ylim=ylim, xlab = xlab, ylab=ylab, main=main, xaxt="n", yaxt="n")
     with(boxes, rect(xleft = xleft, ybottom = ybottom, xright = xright, ytop = ytop, lwd=scale))
-    #points(median_of_group_index~spectrum_index, data=data_subset, cex=.5, pch=15)
+    #points(median_of_group_index~PMD_FDR_spectrum_index, data=data_subset, cex=.5, pch=15)
     axis(1, labels=include_text, lwd=scale)
     axis(2, labels=include_text, lwd=scale)
     box(lwd=scale) #box around plot area
@@ -1562,13 +1762,13 @@ Plot_Density_PMD_and_Norm_Decoy_by_AA_Length$methods(
                                         list(group_peptide_length_special = c("06-08", "09-10", "11-12", "13-15", "16-20", "21-50"),
                                              min                          = c(  6    ,   9    ,  11    ,  13    ,  16    ,  21    ),
                                              max                          = c(     8 ,     10 ,     12 ,     15 ,     20 ,     50 ) ))
-      group_peptide_length_special     <- data.frame(list(peptide_length = 6:50))
-      group_peptide_length_special$min <- with(group_peptide_length_special, sapply(peptide_length, FUN = function(i) max(df_group_definition$min[df_group_definition$min <= i])))
+      group_peptide_length_special     <- data.frame(list(PMD_FDR_peptide_length = 6:50))
+      group_peptide_length_special$min <- with(group_peptide_length_special, sapply(PMD_FDR_peptide_length, FUN = function(i) max(df_group_definition$min[df_group_definition$min <= i])))
       group_peptide_length_special     <- merge(group_peptide_length_special, df_group_definition)
       
       data_groups$group_peptide_length_special <- NULL
       new_data_groups <- (merge(data_groups, 
-                                group_peptide_length_special[,c("peptide_length", 
+                                group_peptide_length_special[,c("PMD_FDR_peptide_length", 
                                                                 "group_peptide_length_special")]))
       return(new_data_groups)
     }
@@ -1806,9 +2006,9 @@ Plot_Selective_Loss$methods(
     # Support functions for plot_selective_loss()
     
     samples_lost_by_threshold <- function(updated_i_fdr=NULL, score_threshold=NULL){
-      data_subset <- subset(updated_i_fdr, confidence >= score_threshold)
+      data_subset <- subset(updated_i_fdr, PMD_FDR_input_score >= score_threshold)
       tbl <- with(updated_i_fdr, 
-                  table(confidence >= score_threshold, 
+                  table(PMD_FDR_input_score >= score_threshold, 
                         new_confidence < score_threshold, 
                         group_decoy_proteins))
       df <- data.frame(tbl)
@@ -1835,7 +2035,7 @@ Plot_Selective_Loss$methods(
     # Main code for plot_selective_loss()
     
     updated_i_fdr                <- data_processor()$i_fdr$df
-    updated_i_fdr$new_confidence <- with(updated_i_fdr, 100 * (1-i_fdr)) #ifelse((1-i_fdr) < (confidence / 100), (1-i_fdr), (confidence/100)))
+    updated_i_fdr$new_confidence <- with(updated_i_fdr, 100 * (1-i_fdr)) #ifelse((1-i_fdr) < (PMD_FDR_input_score / 100), (1-i_fdr), (PMD_FDR_input_score/100)))
     loss_record <- get_loss_record(updated_i_fdr=updated_i_fdr, score_thresholds = 1:100)
     xlim <- with(loss_record, range(score_threshold))
     ylim <- c(0,1)
@@ -1862,6 +2062,124 @@ Plot_Selective_Loss$methods(
     #with(leg, legend(x = "topleft", legend = group, col = col, lty = lty, lwd = lwd, seg.len = seg.len))
     legend_object <- Legend_Object$new(leg, scale)
     legend_object$show()
+  }
+  
+)
+###############################################################################
+#            Class: Plot_Selective_Loss_for_TOC
+###############################################################################
+Plot_Selective_Loss_for_TOC = setRefClass("Plot_Selective_Loss_for_TOC",
+                                          contains = "Plot_Image",
+                                          fields = list(xlab="character",
+                                                        ylab="character",
+                                                        title_x="numeric",
+                                                        title_y="numeric",
+                                                        legend_border="logical",
+                                                        legend_x = "numeric",
+                                                        legend_y = "numeric",
+                                                        legend_title="character",
+                                                        legend_location = "character",
+                                                        name_contaminant = "character",
+                                                        name_decoy = "character",
+                                                        name_human = "character",
+                                                        name_pyro = "character"))
+Plot_Selective_Loss_for_TOC$methods(
+  initialize = function( ...){
+    plot_title <<- "PMD-FDR selectively removes bad hits"
+    callSuper(...)
+    xlab <<- "Confidence threshold (PeptideShaker)"
+    ylab <<- "PMD Disqualifiction Rate"
+    legend_border    <<- FALSE
+    #legend_title     <<-  "Species/Category"
+    title_x          <<- 50
+    title_y          <<- 0.9
+    legend_x         <<- 10         
+    legend_y         <<- 0.75
+    name_contaminant <<- "signal - contaminant"
+    name_decoy       <<- "decoy - reversed"
+    name_human       <<- "decoy - human"
+    name_pyro        <<- "signal - pyrococcus"
+  },
+  data_processor = function(){
+    return(data_processors[[1]])
+  },
+  get_n = function(){
+    data_processor()$i_fdr$ensure()
+    data_subset <- data_processor()$i_fdr$df
+    return(nrow(data_subset))
+  },
+  plot_image = function(){
+    # Support functions for plot_selective_loss()
+    
+    samples_lost_by_threshold <- function(updated_i_fdr=NULL, score_threshold=NULL){
+      data_subset <- subset(updated_i_fdr, PMD_FDR_input_score >= score_threshold)
+      tbl <- with(updated_i_fdr, 
+                  table(PMD_FDR_input_score >= score_threshold, 
+                        new_confidence < score_threshold, 
+                        group_decoy_proteins))
+      df <- data.frame(tbl)
+      df_n <- aggregate(Freq~group_decoy_proteins+Var1, data=df, FUN=sum)
+      df_n <- rename_column(df_n, name_before = "Freq", "n")
+      df <- merge(df, df_n)
+      df$rate_of_loss <- with(df, Freq/n)
+      df <- subset(df, (Var1==TRUE) & (Var2==TRUE))
+      df <- df[,c("group_decoy_proteins", "rate_of_loss", "n", "Freq")]
+      if (nrow(df) > 0){
+        df$score_threshold <- score_threshold
+      }
+      return(df)
+    }
+    get_loss_record <- function(updated_i_fdr=NULL, score_thresholds=NULL){
+      df=data.frame()
+      for (score_threshold in score_thresholds){
+        df_new_loss <- samples_lost_by_threshold(updated_i_fdr, score_threshold)
+        df <- rbind(df, df_new_loss)
+      }
+      return(df)
+    }
+    convert_groups <- function(groups=NULL){
+      new_groups <- groups
+      new_groups <- gsub(pattern = "contaminant", replacement = name_contaminant, x = new_groups)
+      new_groups <- gsub(pattern = "decoy"      , replacement = name_decoy      , x = new_groups)
+      new_groups <- gsub(pattern = "human"      , replacement = name_human      , x = new_groups)
+      new_groups <- gsub(pattern = "pyrococcus" , replacement = name_pyro       , x = new_groups)
+      
+      return(new_groups)
+    }
+    
+    # Main code for plot_selective_loss()
+    
+    updated_i_fdr                <- data_processor()$i_fdr$df
+    updated_i_fdr$new_confidence <- with(updated_i_fdr, 100 * (1-i_fdr)) #ifelse((1-i_fdr) < (PMD_FDR_input_score / 100), (1-i_fdr), (PMD_FDR_input_score/100)))
+    loss_record <- get_loss_record(updated_i_fdr=updated_i_fdr, score_thresholds = 1:100)
+    xlim <- with(loss_record, range(score_threshold))
+    ylim <- c(0,1)
+    #xlab <- "Fixed Confidence threshold (PeptideShaker score)"
+    #ylab <- "Rate of PSM disqualification from PMD-FDR"
+    lwd  <- 4
+    plot(x=xlim, y=ylim, type="n", main=main, xlab=xlab, ylab=ylab)
+    
+    groups <- sort(unique(loss_record$group_decoy_proteins))
+    n_g    <- length(groups)
+    
+    cols <- rainbow_with_fixed_intensity(n=n_g, goal_intensity_0_1 = 0.5, alpha = 1)
+    ltys <- rep(1:6, length.out=n_g)
+    bty  <- ifelse(legend_border, "o", "n")
+    
+    leg     <- list(leg=convert_groups(groups), var_name=groups, col=cols, lty=ltys, lwd=lwd, bty=bty, x=legend_x, y=legend_y)
+    #leg     <- list(leg=groups, col=cols, lty=ltys, lwd=lwd, bty=bty, x=legend_x, y=legend_y)
+    
+    for (i in 1:n_g){
+      lines(rate_of_loss~score_threshold, data=subset(loss_record, group_decoy_proteins==leg$var_name[i]), col=leg$col[i], lwd=leg$lwd * scale, lty=leg$lty[i])
+    }
+    abline(h=0, v=100, lwd=scale)
+    abline(h=c(0.1, 0.8), col="gray", lwd=scale)
+    
+    #leg = list(leg=group, col=col, lty=lty, lwd=lwd)
+    #with(leg, legend(x = "topleft", legend = group, col = col, lty = lty, lwd = lwd, seg.len = seg.len))
+    legend_object <- Legend_Object$new(leg, scale)
+    legend_object$show()
+    text(x=title_x, y=title_y, labels = plot_title)
   }
   
 )
@@ -1930,12 +2248,12 @@ Plot_Compare_iFDR_Confidence_1_Percent_TD_FDR$methods(
     sd_i_fdr <- rename_column(sd_i_fdr, "i_fdr", "sd_i_fdr")
     n_i_fdr <- aggregate(i_fdr~conf_group, data=data_TD_good, FUN=length)
     n_i_fdr <- rename_column(n_i_fdr, "i_fdr", "n")
-    mean_conf <- aggregate(confidence~conf_group, data=data_TD_good, FUN=mean)
-    mean_conf <- rename_column(mean_conf, "confidence", "mean_conf")
-    min_conf <- aggregate(confidence~conf_group, data=data_TD_good, FUN=min)
-    min_conf <- rename_column(min_conf, "confidence", "min_conf")
-    max_conf <- aggregate(confidence~conf_group, data=data_TD_good, FUN=max)
-    max_conf <- rename_column(max_conf, "confidence", "max_conf")
+    mean_conf <- aggregate(PMD_FDR_input_score~conf_group, data=data_TD_good, FUN=mean)
+    mean_conf <- rename_column(mean_conf, "PMD_FDR_input_score", "mean_conf")
+    min_conf <- aggregate(PMD_FDR_input_score~conf_group, data=data_TD_good, FUN=min)
+    min_conf <- rename_column(min_conf, "PMD_FDR_input_score", "min_conf")
+    max_conf <- aggregate(PMD_FDR_input_score~conf_group, data=data_TD_good, FUN=max)
+    max_conf <- rename_column(max_conf, "PMD_FDR_input_score", "max_conf")
     
     mean_results <-                     mean_i_fdr
     mean_results <- merge(mean_results, sd_i_fdr)
@@ -1951,7 +2269,7 @@ Plot_Compare_iFDR_Confidence_1_Percent_TD_FDR$methods(
   },
   get_data_TD_good = function(i_fdr=NULL){
     data_TD_good <- subset(i_fdr, TD_good==TRUE)
-    data_TD_good <- data_TD_good[order(data_TD_good$confidence),]
+    data_TD_good <- data_TD_good[order(data_TD_good$PMD_FDR_input_score),]
     n <- nrow(data_TD_good)
     data_TD_good$conf_group <- cut(1:n, breaks=floor(n/100))
     data_TD_good$i_fdr <- 100 * data_TD_good$i_fdr
@@ -1961,7 +2279,7 @@ Plot_Compare_iFDR_Confidence_1_Percent_TD_FDR$methods(
     i_fdr <- data_processor()$i_fdr$df
     i_fdr$PMD_good  <- i_fdr$i_fdr < 0.01
     i_fdr$TD_good   <- i_fdr$is_in_1percent == TRUE
-    i_fdr$conf_good <- i_fdr$confidence == 100
+    i_fdr$conf_good <- i_fdr$PMD_FDR_input_score == 100
     return(i_fdr)
   },
   one_percent_calculation_exists = function(){
@@ -1970,10 +2288,10 @@ Plot_Compare_iFDR_Confidence_1_Percent_TD_FDR$methods(
   },
   report_good_discrepancies = function(i_fdr=NULL){
     with(subset(i_fdr,                                        (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (confidence==100)                    & (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (confidence>= 99) & (confidence<100) & (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (confidence>= 99) & (confidence<100) & (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (confidence>= 90) & (confidence< 99) & (decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score==100)                    & (decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score>= 99) & (PMD_FDR_input_score<100) & (decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score>= 99) & (PMD_FDR_input_score<100) & (decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score>= 90) & (PMD_FDR_input_score< 99) & (decoy == 0)), print(table(TD_good, PMD_good)))
   }
   
 )
@@ -2002,7 +2320,7 @@ Plot_Density_PMD_by_Score$methods(
   get_modified_data_groups = function(var_value = NULL){
     # Note: Filters out used_to_find_middle
     # Note: Creates "value_of_interest" field
-    # Note: Remakes "group_decoy_confidence" field
+    # Note: Remakes "group_decoy_input_score" field
     data_new                   <- data_processor()$data_groups$df
     data_new                   <- subset(data_new, !used_to_find_middle )
     data_new$value_of_interest <- data_new[, var_value]
@@ -2018,13 +2336,13 @@ Plot_Density_PMD_by_Score$methods(
       
       
       if (lower==upper){
-        idx <- with(data_new, which(                        (confidence == upper) & (decoy == 0)))
+        idx <- with(data_new, which(                        (PMD_FDR_input_score == upper) & (decoy == 0)))
         cat_name <- sprintf("%d", upper)
       } else {
-        idx <- with(data_new, which((confidence >= lower) & (confidence <  upper) & (decoy == 0)))
+        idx <- with(data_new, which((PMD_FDR_input_score >= lower) & (PMD_FDR_input_score <  upper) & (decoy == 0)))
         cat_name <- sprintf("%02d - %2d", lower, upper)
       }
-      data_new$group_decoy_confidence[idx] <- cat_name
+      data_new$group_decoy_input_score[idx] <- cat_name
     }
     
     return(data_new)
@@ -2047,7 +2365,7 @@ Plot_Density_PMD_by_Score$methods(
       to   <- max(data_subset$value_of_interest)
       xlim = range(data_subset$value_of_interest)     
       
-      groups   <- sort(unique(data_subset$group_decoy_confidence), decreasing = TRUE)
+      groups   <- sort(unique(data_subset$group_decoy_input_score), decreasing = TRUE)
       n_groups <- length(groups)
       
       densities <- list(var_value = var_value, groups=groups)
@@ -2055,7 +2373,7 @@ Plot_Density_PMD_by_Score$methods(
       for (i in 1:n_groups){
         group <- groups[i]
         
-        data_group_single  <- subset(data_subset, (group_decoy_confidence == group))
+        data_group_single  <- subset(data_subset, (group_decoy_input_score == group))
         d_group            <- with(data_group_single , density(value_of_interest, from = from, to = to))
         d_group            <- normalize_density(d_group)
         
@@ -2089,7 +2407,7 @@ Plot_Density_PMD_by_Score$methods(
     }
     plot_distributions <- function(densities = NULL, var_value= NULL,include_peak_dots=TRUE, xlab_modifier="", xlim=NULL, ylim=NULL, ...){
       data_groups <- get_modified_data_groups(var_value=var_value)
-      groups      <- sort(unique(data_groups$group_decoy_confidence))
+      groups      <- sort(unique(data_groups$group_decoy_input_score))
       n_groups    <- length(groups)
       
       groups_std   <- setdiff(groups, c("100", "decoy", "0") )
@@ -2142,7 +2460,7 @@ Plot_Density_PMD_by_Score$methods(
     data_groups <- data_processor()$data_groups$df
     
     data_subset_a <- subset(data_groups  , used_to_find_middle == FALSE)
-    data_subset_b <- subset(data_subset_a, peptide_length > 11)
+    data_subset_b <- subset(data_subset_a, PMD_FDR_peptide_length > 11)
     
     densities_a <- get_densities(data_subset = data_subset_a, var_value = "value")        
     densities_b <- get_densities(data_subset = data_subset_b, var_value = "value_norm")
@@ -2328,7 +2646,7 @@ Plots_for_Paper$methods(
     
     create_agg_fdr_stats <- function(i_fdr=NULL, grouping_var_name = NULL){
       formula_fdr <- as.formula(sprintf("%s~%s", "i_fdr", grouping_var_name))
-      formula_len <- as.formula(sprintf("%s~%s", "peptide_length", grouping_var_name))
+      formula_len <- as.formula(sprintf("%s~%s", "PMD_FDR_peptide_length", grouping_var_name))
       agg_fdr <- aggregate(formula=formula_fdr, data=i_fdr, FUN=mean)
       agg_n   <- aggregate(formula=formula_fdr, data=i_fdr, FUN=length)
       agg_len <- aggregate(formula=formula_len, data=i_fdr, FUN=mean)
@@ -2372,7 +2690,7 @@ Plots_for_Paper$methods(
       report_PMD_confidence_comparison_from_subset = function(data_subset=NULL, group_name=NULL){
         print(group_name)
         print(sprintf("    Number of PSMs: %d", nrow(data_subset)))
-        mean_confidence <- mean(data_subset$confidence)
+        mean_confidence <- mean(data_subset$PMD_FDR_input_score)
         print(sprintf("    Mean Confidence Score: %3.1f", mean_confidence))
         print(sprintf("    PeptideShaker g-FDR: %3.1f", 100-mean_confidence))
         mean_PMD_FDR = mean(data_subset$i_fdr)
@@ -2383,13 +2701,13 @@ Plots_for_Paper$methods(
       }
       
       if (is.null(max_conf)) {
-        data_subset <- subset(i_fdr, confidence == min_conf)
+        data_subset <- subset(i_fdr, PMD_FDR_input_score == min_conf)
         group_name <- sprintf("Group %d", min_conf)
       } else if (include_max){
-        data_subset <- subset(i_fdr, (confidence >= min_conf) & (confidence <= max_conf))
+        data_subset <- subset(i_fdr, (PMD_FDR_input_score >= min_conf) & (PMD_FDR_input_score <= max_conf))
         group_name <- sprintf("Group %d through %d", min_conf, max_conf)
       } else {
-        data_subset <- subset(i_fdr, (confidence >= min_conf) & (confidence < max_conf))
+        data_subset <- subset(i_fdr, (PMD_FDR_input_score >= min_conf) & (PMD_FDR_input_score < max_conf))
         group_name <- sprintf("Group %d to %d", min_conf, max_conf)
       }
       
@@ -2407,6 +2725,7 @@ Plots_for_Paper$methods(
     report_comparison_of_Confidence_and_PMD(i_fdr = i_fdr, min_conf=  0, max_conf=100 , include_max=TRUE)
   }
 )
+
 ###############################################################################
 # C - 021 - PMD-FDR Wrapper - functions.R                                     #
 #                                                                             #
