@@ -22,14 +22,16 @@ REM  # --psm_report_1_percent  full name and path to the PSM report for 1% FDR
 REM  # --output_i_fdr          full name and path to the i-FDR output file 
 REM  # --output_g_fdr          full name and path to the g-FDR output file 
 REM  # --output_densities      full name and path to the densities output file 
+REM  # --input_file_type       type of input file (currently supports "PSM_Report" and "PMD_FDR_input_file") 
 
 set param_psm_report=--psm_report "%r_data_dir%input.tabular"
 set param_psm_report_1_percent=--psm_report_1_percent "%r_data_dir%input_1_percent.tabular"
 set param_psm_output_densities=--output_densities "%r_output_dir%output_densities.tabular"
 set param_psm_output_g_fdr=--output_g_fdr "%r_output_dir%output_g_fdr.tabular"
 set param_psm_output_i_fdr=--output_i_fdr "%r_output_dir%output_i_fdr.tabular"
+set param_psm_input_file_type=--input_file_type "PSM_Report"
 
-set params=%param_psm_report% %param_psm_report_1_percent% %param_psm_output_densities% %param_psm_output_g_fdr% %param_psm_output_i_fdr%
+set params=%param_psm_report% %param_psm_report_1_percent% %param_psm_output_densities% %param_psm_output_g_fdr% %param_psm_output_i_fdr% %param_psm_input_file_type
 
 cd "%proj_dir%"
 "%prog%" "%script_name%" %params%
