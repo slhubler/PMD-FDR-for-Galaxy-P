@@ -2743,18 +2743,20 @@ ModuleArgParser_PMD_FDR <- setRefClass("ModuleArgParser_PMD_FDR",
 ModuleArgParser_PMD_FDR$methods(
   initialize = function(description = "Computes individual and global FDR using Precursor Mass Discrepancy (PMD-FDR)", ...){
     callSuper(description=description, ...)
-    local_add_argument("--psm_report"          ,               help="full name and path to the PSM report")
-    local_add_argument("--psm_report_1_percent", default = "", help="full name and path to the PSM report for 1% FDR")
-    local_add_argument("--output_i_fdr"        , default = "", help="full name and path to the i-FDR output file ")
-    local_add_argument("--output_g_fdr"        , default = "", help="full name and path to the g-FDR output file ")
-    local_add_argument("--output_densities"    , default = "", help="full name and path to the densities output file ")
+    local_add_argument("--psm_report"          ,                                 help="full name and path to the PSM report")
+    local_add_argument("--psm_report_1_percent", default = ""                  , help="full name and path to the PSM report for 1% FDR")
+    local_add_argument("--output_i_fdr"        , default = ""                  , help="full name and path to the i-FDR output file ")
+    local_add_argument("--output_g_fdr"        , default = ""                  , help="full name and path to the g-FDR output file ")
+    local_add_argument("--output_densities"    , default = ""                  , help="full name and path to the densities output file ")
+    local_add_argument("--score_field_name"    , default = ""                  , help="name of score field (in R format)")
+    local_add_argument("--input_file_type"     , default = "PMD_FDR_input_file", help="type of input file (currently supports: PSM_Report)")
   }
 )
 ###############################################################################
 #            Class: Data_Object_Info_Parser
 ###############################################################################
 Data_Object_Info_Parser <- setRefClass("Data_Object_Info_Parser", 
-                                       contains = c("Data_Object"),
+                                       contains = c("Data_Object_Info"),
                                        fields =list(parser = "ModuleArgParser_PMD_FDR",
                                                     args = "character",
                                                     parsing_results = "list") )
@@ -2765,6 +2767,9 @@ Data_Object_Info_Parser$methods(
     } else {
       parsing_results <<- parser$parse_arguments(args)
     }
+    
+    set_input_file_type(parsing_results$input_file_type) #BUGBUG: Needs to change according to parameter
+    
   },
   set_args = function(p_args=NULL){ 
     # This is primarily used for testing.  In operation arguments will be passed automatically (through use of commandArgs)
@@ -2780,8 +2785,11 @@ Data_Object_Info_Parser$methods(
   collection_name = function(){ # Overrides parent object
     return("")
   },
-  data_file_name_1_percent_FDR = function(){
+  get_data_file_name_1_percent_FDR = function(){
     return(parsing_results$psm_report_1_percent)
+  },
+  get_field_name_of_score = function(){
+    return(parsing_results$score_field_name)
   }
 )
 ###############################################################################
@@ -2789,15 +2797,16 @@ Data_Object_Info_Parser$methods(
 # Purpose: Wrapper on tools from Project 019 to enable a Galaxy-based interface
 ###############################################################################
 Processor_PMD_FDR_for_Galaxy <- setRefClass("Processor_PMD_FDR_for_Galaxy", 
-                                            fields =list(info          = "Data_Object_Info_Parser",
-                                                         raw_data      = "Data_Object_Raw_Data",
-                                                         raw_1_percent = "Data_Object_Raw_1_Percent",
-                                                         data_groups   = "Data_Object_Groupings",
-                                                         densities     = "Data_Object_Densities",
-                                                         alpha         = "Data_Object_Alpha",
-                                                         i_fdr         = "Data_Object_Individual_FDR"))
+                                            fields =list(info           = "Data_Object_Info_Parser",
+                                                         raw_data       = "Data_Object_Raw_Data",
+                                                         raw_1_percent  = "Data_Object_Raw_1_Percent",
+                                                         data_converter = "Data_Object_Data_Converter",
+                                                         data_groups    = "Data_Object_Groupings",
+                                                         densities      = "Data_Object_Densities",
+                                                         alpha          = "Data_Object_Alpha",
+                                                         i_fdr          = "Data_Object_Individual_FDR"))
 Processor_PMD_FDR_for_Galaxy$methods(
-  initialize = function(p_info=NULL){
+  initialize = function(){
     # This initialization defines all of the dependencies between the various components
     # (Unfortunately, inheriting from Data_Processor leads to issues - I had to reimplement it here with a change to "info")
     
@@ -2809,11 +2818,19 @@ Processor_PMD_FDR_for_Galaxy$methods(
     raw_1_percent$set_info(info)
     info$append_child(raw_1_percent)
     
+    # data_converter
+    data_converter$set_info    (info)
+    data_converter$set_raw_data(raw_data)
+    info         $append_child (data_converter)
+    raw_data     $append_child (data_converter)
+    
     # data_groups
-    data_groups$set_raw_data     (raw_data)
-    data_groups$set_raw_1_percent(raw_1_percent)
-    raw_data     $append_child   (data_groups)
-    raw_1_percent$append_child   (data_groups)
+    data_groups$set_info          (info)
+    data_groups$set_data_converter(data_converter)
+    data_groups$set_raw_1_percent (raw_1_percent)
+    info          $append_child   (data_groups)
+    data_converter$append_child   (data_groups)
+    raw_1_percent $append_child   (data_groups)
     
     # densities
     densities  $set_data_groups(data_groups)
