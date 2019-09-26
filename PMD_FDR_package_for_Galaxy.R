@@ -18,8 +18,8 @@
 # Required packages: argparser                                                #
 #                    stringr                                                  #
 #                                                                             #
-# Release date: 2019-09-23                                                    #
-#      Version: 1.1                                                          #
+# Release date: 2019-09-26                                                    #
+#      Version: 1.2                                                           #
 #                                                                             #
 ###############################################################################
 # Package currently supports the following parameters:
@@ -29,6 +29,7 @@
 # --output_i_fdr          full name and path to the i-FDR output file 
 # --output_g_fdr          full name and path to the g-FDR output file 
 # --output_densities      full name and path to the densities output file 
+# --
 #
 ###############################################################################
 # A - 005 - Parser - ArgParser.R                                              #
@@ -53,11 +54,9 @@ ArgParser$methods(
   },
   parse_arguments = function(...){
     result = parse_args(parser, ...)
-print(result)
     return(result) 
   }
 )
-
 
 ###############################################################################
 # B - 019 - PMD-FDR - functions.R                                             #
@@ -65,12 +64,11 @@ print(result)
 # Primary work-horse for PMD-FDR                                              #
 #                                                                             #
 ###############################################################################
-
-
 ###############################################################################
 ####### Load libraries etc.
 ###############################################################################
 library(stringr)
+library(RUnit)
 
 #############################################################
 ####### Global values (should be parameters to module)
@@ -84,7 +82,7 @@ MIN_GOOD_PEPTIDE_LENGTH <- 11
 # Creates a more useful error report when file is not reasonable
 safe_file_exists <- function(file_path){ # Still not particularly useful in cases where it is a valid directory
   tryCatch(
-    return(file.exists(file_path)),
+    return(file_test(op = "-f", x=file_path)),
     error=function(e) {simpleError(sprintf("file path is not valid: '%s'", file_path))}
   )
 }
@@ -222,6 +220,14 @@ read_field_names = function(file_path=NULL, sep = "\t"){
   fields = strsplit(x = fields, split = sep)[[1]]
   return(fields)
 }
+check_field_name = function(input_df = NULL, name_of_input_df=NULL, field_name=NULL){
+  test_succeeded <- field_name %in% colnames(input_df)
+  current_columns <- paste0(colnames(input_df), collapse=", ")
+  checkTrue(test_succeeded,
+            msg = sprintf("Expected fieldname '%s' in %s (but did not find it among %s)", 
+                          field_name, name_of_input_df, current_columns))
+}
+
 #############################################################
 ####### Classes for Data
 #############################################################
@@ -242,6 +248,7 @@ Data_Object$methods(
   load_data = function(){
     #print(sprintf("Calling %s$load_data()", class_name)) # Useful for debugging
     ensure_parents()
+    verify()
     m_load_data()
     set_dirty(new_value = FALSE)
   },
@@ -256,8 +263,11 @@ Data_Object$methods(
       set_children_dirty()
     }
   },
+  verify = function(){
+    stop(sprintf("verify() is an abstract method - define it in %s before calling load_data()", class_name))
+  },
   m_load_data = function(){
-    stop("m_load_data is an abstract method - define it in a child class before calling load_data()")
+    stop(sprintf("m_load_data() is an abstract method - define it in %s before calling load_data()", class_name))
   },
   append_parent = function(parent=NULL){
     parents <<- append(parents, parent)
@@ -304,9 +314,25 @@ Data_Object_Info$methods(
   initialize = function(){
     callSuper()
     class_name <<- "Data_Object_Info - <Abstract class - class_name needs to be set in subclass>"
+  },    
+  verify = function(){
+    checkFieldExists = function(field_name=NULL){
+      field_value <- .self[[field_name]]
+      checkTrue(length(field_value) > 0,
+                sprintf("Field %s$%s has not been set (and should have been)", class_name, field_name))
+      checkTrue(length(field_value) == 1,
+                sprintf("Field %s$%s has been set to multiple values (and should be a single value)", class_name, field_name))
+      checkTrue(field_value != "",
+                sprintf("Field %s$%s has been set to an empty string (and should not have been)", class_name, field_name))
+    }
+    checkFieldExists("data_file_name")
+    checkFieldExists("data_path_name")
+    checkFieldExists("experiment_name")
+    checkFieldExists("designation")
+    checkFieldExists("m_input_file_type")
+    checkFieldExists("score_field_name")
   },
   m_load_data = function(){
-    
     # Nothing to do - this is really a data class
   },
   file_path = function(){
@@ -470,6 +496,13 @@ Data_Object_Raw_Data$methods(
     callSuper()
     class_name <<- "Data_Object_Raw_Data"
   },
+  verify = function(){
+    # Check that file exists before using it
+    file_path <- get_info()$file_path()
+    if (! safe_file_exists(file_path)){
+      stop(sprintf("Raw data file does not exist (%s)", file_path))
+    }
+  },
   set_info = function(info){
     parents[["info"]] <<- info
   },
@@ -494,6 +527,9 @@ Data_Object_Raw_1_Percent$methods(
   },
   set_info = function(info){
     parents[["info"]] <<- info
+  },
+  verify = function(){
+    # Do nothing - a missing file name is acceptable for this module and is dealt with in load()
   },
   get_info = function(){
     return(verified_element_of_list(parents, "info", "Data_Object_Raw_1_Percent$parents"))
@@ -533,7 +569,58 @@ Data_Object_Data_Converter$methods(
     callSuper()
     class_name <<- "Data_Object_Data_Converter"
   },
+  currently_supported_file_types = function(){
+    return(c("PSM_Report", "PMD_FDR_input_file"))
+  },
+  verify = function(){
+    checkFileTypeSupported = function(){
+      file_type <- get_info()$get_input_file_type()
+      
+      supported_list <- paste0(currently_supported_file_types(), collapse = " ")
+      checkTrue(file_type %in% currently_supported_file_types(),
+                sprintf("File type (%s) is not currently supported in Data_Object_Data_Converter (currently support: %s)",
+                        file_type, supported_list))
+    }
+    info     <- get_info()
+    raw_data <- get_raw_data()
+    
+    file_type <- info$get_input_file_type()
+    
+    checkFileTypeSupported()
+    
+    data_original <- raw_data$df
+    if (file_type == "PSM_Report"){
+      check_field_name(data_original, "raw_data", info$get_field_name_of_score())
+      check_field_name(data_original, "raw_data", "Precursor m/z Error [ppm]")
+      check_field_name(data_original, "raw_data", "Spectrum File")
+      check_field_name(data_original, "raw_data", "Protein(s)")
+      check_field_name(data_original, "raw_data", "Spectrum Title")
+      check_field_name(data_original, "raw_data", "Decoy")
+      check_field_name(data_original, "raw_data", "Sequence")
+    }
+    if (file_type == "PMD_FDR_input_file"){
+      check_field_name(data_original, "raw_data", "PMD_FDR_input_score")
+      check_field_name(data_original, "raw_data", "PMD_FDR_pmd")
+      check_field_name(data_original, "raw_data", "PMD_FDR_spectrum_file")
+      check_field_name(data_original, "raw_data", "PMD_FDR_proteins")
+      check_field_name(data_original, "raw_data", "PMD_FDR_spectrum_title")
+      check_field_name(data_original, "raw_data", "PMD_FDR_sequence")
+      check_field_name(data_original, "raw_data", "PMD_FDR_decoy")
+    }
+    
+    # if (file_type == "PSM_Report"){
+    #   data_new <- raw_data$df
+    #   field_name_of_score <- info$get_field_name_of_score()
+    #   data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
+    #   data_new$PMD_FDR_pmd            <- data_new[, "Precursor m/z Error [ppm]"]
+    #   data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
+    #   data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
+    #   data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
+    # }
+    
+  },
   m_load_data = function(){
+    
     info     <- get_info()
     raw_data <- get_raw_data()
     
@@ -543,10 +630,12 @@ Data_Object_Data_Converter$methods(
       data_new <- raw_data$df
       field_name_of_score <- info$get_field_name_of_score()
       data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
-      data_new$PMD_FDR_PMD            <- data_new[, "Precursor m/z Error [ppm]"]
+      data_new$PMD_FDR_pmd            <- data_new[, "Precursor m/z Error [ppm]"]
       data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
       data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
       data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
+      data_new$PMD_FDR_sequence       <- data_new[, "Sequence"                 ]
+      data_new$PMD_FDR_decoy          <- data_new[, "Decoy"                    ]
       
       df <<- data_new
     }
@@ -586,6 +675,18 @@ Data_Object_Groupings$methods(
     result <- gsub(pattern = "PMD_FDR_", replacement = "", x = x)
     return(result)
   },
+  verify = function(){
+    data_original <- get_data_converter()$df
+    
+    check_field_name(data_original, "data_converter", "PMD_FDR_input_score")
+    check_field_name(data_original, "data_converter", "PMD_FDR_pmd")
+    check_field_name(data_original, "data_converter", "PMD_FDR_spectrum_file")
+    check_field_name(data_original, "data_converter", "PMD_FDR_proteins")
+    check_field_name(data_original, "data_converter", "PMD_FDR_spectrum_title")
+    check_field_name(data_original, "data_converter", "PMD_FDR_sequence")
+    check_field_name(data_original, "data_converter", "PMD_FDR_decoy")
+    
+  },
   m_load_data = function(){
     make_data_groups <- function(data_original=NULL){
       
@@ -593,19 +694,6 @@ Data_Object_Groupings$methods(
       
       standardize_fields <- function(data=NULL){
         data_new <- data
-        manage_decoy_column <- function(data=NULL){
-          is_column_of <- function(colname=NULL, data=NULL){
-            return(colname %in% colnames(data))
-          }
-          data_new <- data
-          if (is_column_of("Decoy", data_new)){
-            data_new <- rename_column(data_new, "Decoy" , "decoy")
-          } else {
-            data_new$decoy <- 0
-          }
-          
-          return(data_new)
-        }
         
         info <- get_info()
         info$ensure()
@@ -613,7 +701,7 @@ Data_Object_Groupings$methods(
         
         # #data_new <- rename_column(data_new, "Variable Modifications"   , "ptm_list")
         # data_new <- rename_column(data_new, field_name_of_score        , "PMD_FDR_input_score")
-        # data_new <- rename_column(data_new, "Precursor m/z Error [ppm]", "PMD_FDR_PMD")
+        # data_new <- rename_column(data_new, "Precursor m/z Error [ppm]", "PMD_FDR_pmd")
         # #data_new <- rename_column(data_new, "Isotope Number"           , "isotope_number")
         # #data_new <- rename_column(data_new, "m/z"                      , "m_z")
         # #data_new <- rename_column(data_new, "Measured Charge"          , "charge")
@@ -624,15 +712,13 @@ Data_Object_Groupings$methods(
         
         # Now managed in Data_Converter
         # data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
-        # data_new$PMD_FDR_PMD            <- data_new[, "Precursor m/z Error [ppm]"]
+        # data_new$PMD_FDR_pmd            <- data_new[, "Precursor m/z Error [ppm]"]
         # data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
         # data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
         # data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
         
-        data_new <- manage_decoy_column(data_new)
-        
-        data_new$value          <- data_new$PMD_FDR_PMD
-        data_new$PMD_FDR_peptide_length <- str_length(data_new$Sequence)
+        data_new$value          <- data_new$PMD_FDR_pmd
+        data_new$PMD_FDR_peptide_length <- str_length(data_new$PMD_FDR_sequence)
         #data_new$charge_value   <- with(data_new, as.numeric(substr(charge, start=1, stop=str_length(charge)-1)))
         #data_new$measured_mass  <- with(data_new, m_z*charge_value)
         data_new$PMD_FDR_spectrum_index <- NA
@@ -724,7 +810,7 @@ Data_Object_Groupings$methods(
         field_name_decoy <- sprintf("group_decoy_%s", simple_field_name)
         field_name_group <- sprintf("group_%s",       simple_field_name)
         
-        data_groups[[field_name_decoy]] <- with(data_groups, ifelse(decoy, "decoy", data_groups[[field_name_group]]))
+        data_groups[[field_name_decoy]] <- with(data_groups, ifelse(PMD_FDR_decoy, "decoy", data_groups[[field_name_group]]))
         
         return(data_groups)
       }
@@ -734,8 +820,8 @@ Data_Object_Groupings$methods(
         lowest_confidence_group <- min(data_groups$group_input_score)
         
         is_long_enough   <- with(df_new, (PMD_FDR_peptide_length >= MIN_GOOD_PEPTIDE_LENGTH)    )
-        is_good          <- with(df_new, (decoy == 0) & (PMD_FDR_input_score == 100)             )
-        is_bad           <- with(df_new, (decoy == 1) )
+        is_good          <- with(df_new, (PMD_FDR_decoy == 0) & (PMD_FDR_input_score == 100)             )
+        is_bad           <- with(df_new, (PMD_FDR_decoy == 1) )
         #is_used_to_train <- with(df_new, used_to_find_middle) # BUGBUG: circular definition
         
         idx_good         <- which(is_good         ) # & is_long_enough)
@@ -804,7 +890,7 @@ Data_Object_Groupings$methods(
             
             # Main code of for get_cut_points()
             max_idx = max(data_subset$PMD_FDR_spectrum_index)
-            data_sub_sub <- subset(data_subset, group_training_class == "good_training") #(PMD_FDR_input_score==100) & (decoy==0))
+            data_sub_sub <- subset(data_subset, group_training_class == "good_training") #(PMD_FDR_input_score==100) & (PMD_FDR_decoy==0))
             minimum_segment_length = 50
             
             values <- data_sub_sub$value
@@ -899,7 +985,7 @@ Data_Object_Groupings$methods(
                                           vec.tolerance       = 1, 
                                           value_format        = "03d")
       
-      data_groups <- add_grouped_variable(field_name_to_group = "PMD_FDR_PMD", 
+      data_groups <- add_grouped_variable(field_name_to_group = "PMD_FDR_pmd", 
                                           data_groups         = data_groups, 
                                           vec.length.out      = 21, 
                                           vec.tolerance       = 0.1, 
@@ -937,9 +1023,9 @@ Data_Object_Groupings$methods(
       data_groups <- add_median_of_group_index( data_groups = data_groups)
       data_groups <- add_value_norm(            data_groups = data_groups)
       
-      # fields_of_interest <- c("PMD_FDR_input_score", "PMD_FDR_PMD", "m_z", "PMD_FDR_peptide_length", "isotope_number", "charge", "PMD_FDR_spectrum_file", "measured_mass", "PMD_FDR_spectrum_index", "PMD_FDR_proteins")
+      # fields_of_interest <- c("PMD_FDR_input_score", "PMD_FDR_pmd", "m_z", "PMD_FDR_peptide_length", "isotope_number", "charge", "PMD_FDR_spectrum_file", "measured_mass", "PMD_FDR_spectrum_index", "PMD_FDR_proteins")
       # fields_of_interest <- c("value", 
-      #                         "decoy",
+      #                         "PMD_FDR_decoy",
       #                         "PMD_FDR_spectrum_title",
       #                         "median_of_group_index",
       #                         "value_norm",
@@ -949,9 +1035,9 @@ Data_Object_Groupings$methods(
       #                         sprintf("group_%s"      , fields_of_interest),
       #                         sprintf("group_decoy_%s", fields_of_interest))
       
-      fields_of_interest <- c("PMD_FDR_input_score", "PMD_FDR_PMD", "PMD_FDR_peptide_length", "PMD_FDR_spectrum_file", "PMD_FDR_spectrum_index", "PMD_FDR_proteins")
+      fields_of_interest <- c("PMD_FDR_input_score", "PMD_FDR_pmd", "PMD_FDR_peptide_length", "PMD_FDR_spectrum_file", "PMD_FDR_spectrum_index", "PMD_FDR_proteins")
       fields_of_interest <- c("value",
-                              "decoy",
+                              "PMD_FDR_decoy",
                               "PMD_FDR_spectrum_title",
                               "median_of_group_index",
                               "value_norm",
@@ -999,6 +1085,21 @@ Data_Object_Individual_FDR$methods(
   initialize = function(){
     callSuper()
     class_name <<- "Data_Object_Individual_FDR"
+  },
+  verify = function(){
+    data_groups = get_data_groups()$df
+    densities   = get_densities()$df
+    alpha       = get_alpha()$df
+    
+    check_field_name(data_groups, "data_groups", "value_norm")
+    check_field_name(data_groups, "data_groups", "group_decoy_input_score")
+    check_field_name(data_groups, "data_groups", "PMD_FDR_peptide_length")
+    check_field_name(data_groups, "data_groups", "PMD_FDR_input_score")
+    check_field_name(alpha, "alpha", "alpha") # BUGBUG: I'm missing a field here...
+    check_field_name(densities, "densities", "x")
+    check_field_name(densities, "densities", "t")
+    check_field_name(densities, "densities", "f")
+    
   },
   set_data_groups = function(parent){
     parents[["data_groups"]] <<- parent
@@ -1055,7 +1156,7 @@ Data_Object_Individual_FDR$methods(
       
       #group_fdr   <- get_group_fdr(data_groups = data_subset, densities=densities)
       group_stats <- merge(alpha, group_input_score)
-      group_stats <- subset(group_stats, group_of_interest != "decoy")
+      group_stats <- subset(group_stats, group_of_interest != "PMD_FDR_decoy")
       
       x=c(0,group_stats$group_input_score)
       y=c(1,group_stats$alpha)
@@ -1063,7 +1164,7 @@ Data_Object_Individual_FDR$methods(
       
       data_new$interpolated_groupwise_FDR <- FUN_interp(data_new$PMD_FDR_input_score)
       if (set_decoy_to_1){
-        data_new$interpolated_groupwise_FDR[data_new$decoy == 1] <- 1
+        data_new$interpolated_groupwise_FDR[data_new$PMD_FDR_decoy == 1] <- 1
       }
       
       return(data_new)
@@ -1108,6 +1209,16 @@ Data_Object_Densities$methods(
     callSuper()
     class_name <<- "Data_Object_Densities"
   },
+  verify = function(){
+    df_data_groups <- get_data_groups()$df
+    
+    checkTrue(nrow(df_data_groups) > 0,
+              msg = "data_groups data frame was empty (and should not have been)")
+    
+    check_field_name(df_data_groups, "data_groups", "value_norm")
+    check_field_name(df_data_groups, "data_groups", "group_decoy_input_score")
+    check_field_name(df_data_groups, "data_groups", "group_training_class")
+  },
   set_data_groups = function(parent=NULL){
     parents[["data_groups"]] <<- parent
   },
@@ -1117,9 +1228,9 @@ Data_Object_Densities$methods(
   m_load_data = function(){
     
     # Support functions for make_densities()
-    set_values_of_interest <- function(){
-      field_decoy_group = "group_decoy_input_score"
+    set_values_of_interest <- function(df_data_groups){
       field_value       = "value_norm"
+      field_decoy_group = "group_decoy_input_score"
       new_data_groups <- get_data_groups()$df
       new_data_groups$value_of_interest <- new_data_groups[,field_value]
       new_data_groups$group_of_interest <- new_data_groups[,field_decoy_group]
@@ -1171,7 +1282,6 @@ Data_Object_Densities$methods(
       return(d_true)
     }
     make_false_hit_density <- function(data_groups=NULL){
-      #stop("Data_Object_Densities$make_false_hit_density() is untested beyond here")
       d_false <- make_hit_density(data_subset = subset(data_groups, (group_training_class == "bad_long") ),
                                   ylim        = get_ylim(data_groups))
       
@@ -1193,16 +1303,15 @@ Data_Object_Densities$methods(
     }
     
     # Main section of make_densities()
-    
-    
-    data_groups <- set_values_of_interest()
-    d_true  <- make_true_hit_density( data_groups)
-    d_false <- make_false_hit_density(data_groups)
+    df_data_groups <- get_data_groups()$df
+    new_data_groups <- set_values_of_interest(df_data_groups)
+    d_true  <- make_true_hit_density( new_data_groups)
+    d_false <- make_false_hit_density(new_data_groups)
     
     densities <- data.frame(x=d_true$x, 
                             t=d_true$y, 
                             f=d_false$y)
-    densities <- add_v_densities(data_groups=data_groups, densities=densities)
+    densities <- add_v_densities(data_groups=new_data_groups, densities=densities)
     df <<- densities
   }
 )
@@ -1216,6 +1325,12 @@ Data_Object_Alpha$methods(
   initialize = function(){
     callSuper()
     class_name <<- "Data_Object_Alpha"
+  },
+  verify = function(){
+    densities <- get_densities()$df
+    
+    checkTrue(nrow(densities) > 0,
+              msg = "Densities data.frame was empty (and should not have been)")
   },
   set_densities = function(parent=NULL){
     parents[["densities"]] <<- parent
@@ -1502,8 +1617,8 @@ Plot_Compare_PMD_and_Norm_Density$methods(
       from <- min(data_subset$value_of_interest)
       to   <- max(data_subset$value_of_interest)
       xlim = range(data_subset$value_of_interest)
-      data_true  <- subset(data_subset, (decoy==0) & (PMD_FDR_input_score==100))
-      data_false <- subset(data_subset, (decoy==1))       
+      data_true  <- subset(data_subset, (PMD_FDR_decoy==0) & (PMD_FDR_input_score==100))
+      data_false <- subset(data_subset, (PMD_FDR_decoy==1))       
       d_true  <- with(data_true , density(value_of_interest, from = from, to = to))
       d_false <- with(data_false, density(value_of_interest, from = from, to = to))
       d_true  <- normalize_density(d_true)
@@ -1590,8 +1705,8 @@ Plot_Compare_PMD_and_Norm_Density$methods(
       data_subset <- data_subset_b
     }
     
-    data_true  <- subset(data_subset, (decoy==0) & (PMD_FDR_input_score==100))
-    data_false <- subset(data_subset, (decoy==1))       
+    data_true  <- subset(data_subset, (PMD_FDR_decoy==0) & (PMD_FDR_input_score==100))
+    data_false <- subset(data_subset, (PMD_FDR_decoy==1))       
     
     return(nrow(data_true) + nrow(data_false))
   }
@@ -1745,7 +1860,7 @@ Plot_Density_PMD_and_Norm_Decoy_by_AA_Length$methods(
   get_n = function(){
     data_processor <- data_processors[[1]]
     data_processor$data_groups$ensure()
-    data_subset <- subset(data_processor$data_groups$df, (decoy == 1))
+    data_subset <- subset(data_processor$data_groups$df, (PMD_FDR_decoy == 1))
     return(nrow(data_subset))
   },
   plot_image = function(){
@@ -1882,7 +1997,7 @@ Plot_Density_PMD_and_Norm_Decoy_by_AA_Length$methods(
     # Main body for plot_density_PMD_and_norm_decoy_by_aa_length()
     
     data_mod <- add_group_peptide_length_special()
-    data_mod <- subset(data_mod, decoy==1)
+    data_mod <- subset(data_mod, PMD_FDR_decoy==1)
     
     densities_a <- get_densities(data_subset = data_mod, field_value = "value"     , field_group = "group_peptide_length_special")
     densities_b <- get_densities(data_subset = data_mod, field_value = "value_norm", field_group = "group_peptide_length_special")
@@ -1926,7 +2041,7 @@ Plot_Bad_CI$methods(
   },
   get_n = function(){
     data_processor()$data_groups$ensure()
-    return(nrow(subset(data_processor()$data_groups$df, (decoy == 1))))
+    return(nrow(subset(data_processor()$data_groups$df, (PMD_FDR_decoy == 1))))
   },
   plot_image = function(){
     data_processor()$data_groups$ensure()
@@ -2287,11 +2402,11 @@ Plot_Compare_iFDR_Confidence_1_Percent_TD_FDR$methods(
     return(data_processor()$raw_1_percent$exists())# "is_in_1percent" %in% colnames(data_processor()$i_fdr))
   },
   report_good_discrepancies = function(i_fdr=NULL){
-    with(subset(i_fdr,                                        (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (PMD_FDR_input_score==100)                    & (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (PMD_FDR_input_score>= 99) & (PMD_FDR_input_score<100) & (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (PMD_FDR_input_score>= 99) & (PMD_FDR_input_score<100) & (decoy == 0)), print(table(TD_good, PMD_good)))
-    with(subset(i_fdr, (PMD_FDR_input_score>= 90) & (PMD_FDR_input_score< 99) & (decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr,                                        (PMD_FDR_decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score==100)                    & (PMD_FDR_decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score>= 99) & (PMD_FDR_input_score<100) & (PMD_FDR_decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score>= 99) & (PMD_FDR_input_score<100) & (PMD_FDR_decoy == 0)), print(table(TD_good, PMD_good)))
+    with(subset(i_fdr, (PMD_FDR_input_score>= 90) & (PMD_FDR_input_score< 99) & (PMD_FDR_decoy == 0)), print(table(TD_good, PMD_good)))
   }
   
 )
@@ -2336,10 +2451,10 @@ Plot_Density_PMD_by_Score$methods(
       
       
       if (lower==upper){
-        idx <- with(data_new, which(                        (PMD_FDR_input_score == upper) & (decoy == 0)))
+        idx <- with(data_new, which(                        (PMD_FDR_input_score == upper) & (PMD_FDR_decoy == 0)))
         cat_name <- sprintf("%d", upper)
       } else {
-        idx <- with(data_new, which((PMD_FDR_input_score >= lower) & (PMD_FDR_input_score <  upper) & (decoy == 0)))
+        idx <- with(data_new, which((PMD_FDR_input_score >= lower) & (PMD_FDR_input_score <  upper) & (PMD_FDR_decoy == 0)))
         cat_name <- sprintf("%02d - %2d", lower, upper)
       }
       data_new$group_decoy_input_score[idx] <- cat_name
@@ -2733,7 +2848,6 @@ Plots_for_Paper$methods(
 # can run as a batch file                                                     #
 #                                                                             #
 ###############################################################################
-
 ###############################################################################
 #            Class: ModuleArgParser_PMD_FDR
 ###############################################################################
@@ -2753,14 +2867,21 @@ ModuleArgParser_PMD_FDR$methods(
   }
 )
 ###############################################################################
-#            Class: Data_Object_Info_Parser
+#            Class: Data_Object_Parser
 ###############################################################################
-Data_Object_Info_Parser <- setRefClass("Data_Object_Info_Parser", 
-                                       contains = c("Data_Object_Info"),
-                                       fields =list(parser = "ModuleArgParser_PMD_FDR",
-                                                    args = "character",
-                                                    parsing_results = "list") )
-Data_Object_Info_Parser$methods(
+Data_Object_Parser <- setRefClass("Data_Object_Parser", 
+                                  contains = c("Data_Object"),
+                                  fields =list(parser = "ModuleArgParser_PMD_FDR",
+                                               args = "character",
+                                               parsing_results = "list") )
+Data_Object_Parser$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Parser"
+  },
+  verify = function(){
+    # Nothing to do here - parser handles verification during load
+  },
   m_load_data = function(){
     if (length(args) == 0){
       parsing_results <<- parser$parse_arguments(NULL)
@@ -2768,47 +2889,152 @@ Data_Object_Info_Parser$methods(
       parsing_results <<- parser$parse_arguments(args)
     }
     
-    set_input_file_type(parsing_results$input_file_type) #BUGBUG: Needs to change according to parameter
-    
   },
   set_args = function(p_args=NULL){ 
     # This is primarily used for testing.  In operation arguments will be passed automatically (through use of commandArgs)
     args <<- p_args
     set_dirty(TRUE)
+  }
+)
+###############################################################################
+#            Class: Data_Object_Info_Parser
+###############################################################################
+Data_Object_Info_Parser <- setRefClass("Data_Object_Info_Parser", 
+                                       contains = c("Data_Object_Info"),
+                                       fields =list(
+                                         output_i_fdr = "character",
+                                         output_g_fdr = "character",
+                                         output_densities = "character"
+                                       ) )
+Data_Object_Info_Parser$methods(
+  initialize = function(){
+    callSuper()
+    class_name <<- "Data_Object_Info_Parser"
   },
-  file_path = function(){ # Overrides parent object
-    return(parsing_results$psm_report)
+  verify = function(){
+    check_field_exists = function(field_name=NULL, check_empty = TRUE){
+      field_value <- get_parser()$parsing_results[field_name]
+      checkTrue(! is.null(field_value),
+                msg = sprintf("Parameter %s was not passed to PMD_FDR", field_value))
+      if (check_empty){
+        checkTrue(! is.null(field_value),
+                  msg = sprintf("Parameter %s was not passed to PMD_FDR", field_value))
+      }
+    }
+    # Check parameters passed in
+    check_field_exists("junk")
+    check_field_exists("psm_report")
+    check_field_exists("psm_report_1_percent", check_empty = FALSE)
+    check_field_exists("output_i_fdr"        , check_empty = FALSE)
+    check_field_exists("output_g_fdr"        , check_empty = FALSE)
+    check_field_exists("output_densities"    , check_empty = FALSE)
+    check_field_exists("score_field_name")
+    check_field_exists("input_file_type")
   },
-  file_path_1_percent_FDR = function(){ # Overrides parent object
-    return(parsing_results$psm_report_1_percent)
+  m_load_data = function(){
+    parsing_results <- get_parser()$parsing_results
+    
+    data_file_name               <<- as.character(parsing_results["psm_report"])
+    data_file_name_1_percent_FDR <<- as.character(parsing_results["psm_report_1_percent"])
+    data_path_name               <<- as.character(parsing_results[""])
+    #experiment_name              <<- data_file_name
+    #designation                  <<- ""
+    output_i_fdr                 <<- as.character(parsing_results["output_i_fdr"])
+    output_g_fdr                 <<- as.character(parsing_results["output_g_fdr"])
+    output_densities             <<- as.character(parsing_results["output_densities"])
+    
+    score_field_name             <<- as.character(parsing_results["score_field_name"])
+    set_input_file_type(             as.character(parsing_results["input_file_type"]))
   },
-  collection_name = function(){ # Overrides parent object
-    return("")
+  set_parser = function(parser){
+    parents[["parser"]] <<- parser
+  },
+  get_parser = function(){
+    return(verified_element_of_list(parents, "parser", "Data_Object_Info_Parser$parents"))
+  },
+  file_path = function(){
+    result <- data_file_name # Now assumes that full path is provided
+    if (length(result) == 0){
+      stop("Unable to validate file path - file name is missing")
+    }
+    return(result)
+  },
+  file_path_1_percent_FDR = function(){
+    local_file_name <- get_data_file_name_1_percent_FDR()
+    if (length(local_file_name) == 0){
+      result <- ""
+    } else {
+      result <- local_file_name # path name is no longer relevant
+    }
+    
+    # Continue even if file name is missing - not all analyses have a 1 percent FDR file; this is managed downstream
+    
+    # if (length(result) == 0){
+    #   stop("Unable to validate file path - one or both of path name and file name (of 1 percent FDR file) are missing")
+    # }
+    return(result)
   },
   get_data_file_name_1_percent_FDR = function(){
-    return(parsing_results$psm_report_1_percent)
+    return(data_file_name_1_percent_FDR)
+  },
+  collection_name = function(){
+    result <- ""
+    return(result)
   },
   get_field_name_of_score = function(){
-    return(parsing_results$score_field_name)
+    if (length(score_field_name) == 0){
+      stop("score_field_name has not been set for this project")
+    }
+    return(score_field_name)
+  },
+  set_input_file_type = function(p_input_file_type=NULL){
+    if (p_input_file_type == "PSM_Report"){
+      # do nothing, for now
+    }
+    else if (p_input_file_type == "PMD_FDR_input_file"){
+      score_field_name <<- "PMD_FDR_input_score"
+    }
+    else {
+      stop(sprintf("input_file_type ('%s') is not currently supported - file_type not changed", p_input_file_type))
+    }
+    m_input_file_type <<- p_input_file_type
+  },
+  get_input_file_type = function(){
+    if (length(m_input_file_type) == 0){
+      stop("input_file_type has not been set yet (null string)")
+    }
+    if (m_input_file_type == ""){
+      stop("input_file_type has not been set yet")
+    }
+    
+    return(m_input_file_type)
   }
+  
 )
 ###############################################################################
 #            Class: Processor_PMD_FDR_for_Galaxy
 # Purpose: Wrapper on tools from Project 019 to enable a Galaxy-based interface
 ###############################################################################
 Processor_PMD_FDR_for_Galaxy <- setRefClass("Processor_PMD_FDR_for_Galaxy", 
-                                            fields =list(info           = "Data_Object_Info_Parser",
-                                                         raw_data       = "Data_Object_Raw_Data",
-                                                         raw_1_percent  = "Data_Object_Raw_1_Percent",
-                                                         data_converter = "Data_Object_Data_Converter",
-                                                         data_groups    = "Data_Object_Groupings",
-                                                         densities      = "Data_Object_Densities",
-                                                         alpha          = "Data_Object_Alpha",
-                                                         i_fdr          = "Data_Object_Individual_FDR"))
+                                            fields = list(
+                                              parser         = "Data_Object_Parser",
+                                              info           = "Data_Object_Info_Parser",
+                                              raw_data       = "Data_Object_Raw_Data",
+                                              raw_1_percent  = "Data_Object_Raw_1_Percent",
+                                              data_converter = "Data_Object_Data_Converter",
+                                              data_groups    = "Data_Object_Groupings",
+                                              densities      = "Data_Object_Densities",
+                                              alpha          = "Data_Object_Alpha",
+                                              i_fdr          = "Data_Object_Individual_FDR"
+                                            ))
 Processor_PMD_FDR_for_Galaxy$methods(
   initialize = function(){
     # This initialization defines all of the dependencies between the various components
     # (Unfortunately, inheriting from Data_Processor leads to issues - I had to reimplement it here with a change to "info")
+    
+    # info
+    info$set_parser(parser)
+    parser$append_child(info)
     
     # raw_data
     raw_data$set_info(info)
@@ -2851,17 +3077,15 @@ Processor_PMD_FDR_for_Galaxy$methods(
   },
   compute = function(){
     #i_fdr is currently the lowest level object - it ultimately depends on everything else.
-    i_fdr$ensure() # All pieces on which i_fdr depends are automatically computed (through their ensure())
+    i_fdr$ensure() # All pieces on which i_fdr depends are automatically verified and computed (through their verify() and ensure())
     
-    save_standard_df(x = densities$df, file_path = info$parsing_results$output_densities)
-    save_standard_df(x =     alpha$df, file_path = info$parsing_results$output_g_fdr)
-    save_standard_df(x =     i_fdr$df, file_path = info$parsing_results$output_i_fdr)
+    save_standard_df(x = densities$df, file_path = info$output_densities)
+    save_standard_df(x =     alpha$df, file_path = info$output_g_fdr)
+    save_standard_df(x =     i_fdr$df, file_path = info$output_i_fdr)
   }
 )
 ###############################################################################
-# PMD_FDR_Main.R                                                              #
-#                                                                             #
-# Project 021 - PMD-FDR for Galaxy-P                                          #
+# D - 021 - PMD-FDR Main.R                                                    #
 #                                                                             #
 # File Description: Contains the base code that interprets the parameters     #
 #                   and computes i-FDR and g-FDR for a mass spec project      #
@@ -2870,6 +3094,6 @@ Processor_PMD_FDR_for_Galaxy$methods(
 argv <- commandArgs(TRUE) # Saves the parameters (command code)
 
 processor <- Processor_PMD_FDR_for_Galaxy$new()
-processor$info$set_args(argv)
+processor$parser$set_args(argv)
 processor$compute()
 
