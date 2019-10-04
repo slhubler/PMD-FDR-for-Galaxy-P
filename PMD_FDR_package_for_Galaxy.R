@@ -17,9 +17,10 @@
 #                                                                             #
 # Required packages: argparser                                                #
 #                    stringr                                                  #
+#                    RUnit                                                    #
 #                                                                             #
-# Release date: 2019-09-26                                                    #
-#      Version: 1.2                                                           #
+# Release date: 2019-10-04                                                    #
+#      Version: 1.3                                                           #
 #                                                                             #
 ###############################################################################
 # Package currently supports the following parameters:
@@ -71,10 +72,11 @@ library(stringr)
 library(RUnit)
 
 #############################################################
-####### Global values (should be parameters to module)
+####### Global values (should be parameters to module but aren't yet)
 #############################################################
 
-MIN_GOOD_PEPTIDE_LENGTH <- 11
+MIN_GOOD_PEPTIDE_LENGTH          <- 11
+MIN_ACCEPTABLE_POINTS_IN_DENSITY <- 10
 
 #############################################################
 ####### General purpose functions
@@ -97,6 +99,10 @@ load_standard_df <- function(file_path=NULL){
   if (safe_file_exists(file_path)){
     field_names <- read_field_names(file_path, sep = "\t")
     field_names <- clean_field_names(field_names)
+    
+    if (length(field_names) == 0){
+      return(data.frame())
+    }
     data <- read.table(file = file_path, header = TRUE, sep = "\t", stringsAsFactors = FALSE, blank.lines.skip = TRUE)#, check.names = FALSE)
     colnames(data) = field_names
   } else {
@@ -217,6 +223,10 @@ read_field_names = function(file_path=NULL, sep = "\t"){
   con = file(file_path,"r")
   fields = readLines(con, n=1)
   close(con)
+  
+  if (length(fields) == 0){
+    return(c())
+  }
   fields = strsplit(x = fields, split = sep)[[1]]
   return(fields)
 }
@@ -231,7 +241,6 @@ check_field_name = function(input_df = NULL, name_of_input_df=NULL, field_name=N
 #############################################################
 ####### Classes for Data
 #############################################################
-
 ###############################################################################
 #            Class: Data_Object
 ###############################################################################
@@ -820,7 +829,7 @@ Data_Object_Groupings$methods(
         lowest_confidence_group <- min(data_groups$group_input_score)
         
         is_long_enough   <- with(df_new, (PMD_FDR_peptide_length >= MIN_GOOD_PEPTIDE_LENGTH)    )
-        is_good          <- with(df_new, (PMD_FDR_decoy == 0) & (PMD_FDR_input_score == 100)             )
+        is_good          <- with(df_new, (PMD_FDR_decoy == 0) & (PMD_FDR_input_score == 100) )
         is_bad           <- with(df_new, (PMD_FDR_decoy == 1) )
         #is_used_to_train <- with(df_new, used_to_find_middle) # BUGBUG: circular definition
         
@@ -1228,23 +1237,36 @@ Data_Object_Densities$methods(
   m_load_data = function(){
     
     # Support functions for make_densities()
-    set_values_of_interest <- function(df_data_groups){
+    set_values_of_interest <- function(df_data_groups=NULL, field_group = NULL){
       field_value       = "value_norm"
-      field_decoy_group = "group_decoy_input_score"
+      
       new_data_groups <- get_data_groups()$df
       new_data_groups$value_of_interest <- new_data_groups[,field_value]
-      new_data_groups$group_of_interest <- new_data_groups[,field_decoy_group]
+      new_data_groups$group_of_interest <- new_data_groups[,field_group]
       #groups <- sort(unique(new_data_groups$group_of_interest))
       
       return(new_data_groups)
     }
     get_ylim <- function(data_groups=NULL){
-      ylim <- range(data_groups$value_of_interest)
-      
+      ylim <- range(data_groups$value_of_interest, na.rm = TRUE)
       return(ylim)
     }
-    make_hit_density <- function(data_subset=NULL, ylim=NULL){
+    make_hit_density <- function(data_subset=NULL, descr_of_df=NULL, ylim=NULL){
       #stop("Data_Object_Densities$make_hit_density() is untested beyond here")
+      verify_density = function(data_subset=NULL, value_field=NULL, descr_of_df=NULL, ylim=NULL){
+        values <- data_subset[value_field]
+        values <- values[! is.na(values)]
+        if (length(values) < MIN_ACCEPTABLE_POINTS_IN_DENSITY){
+          stop (sprintf("There are too few valid %s (%d < %d) in %s to be used for calculating a density function",
+                        value_field, 
+                        length(values),
+                        MIN_ACCEPTABLE_POINTS_IN_DENSITY,
+                        descr_of_df))
+        }
+        d <- density(values, from = ylim[1], to = ylim[2])
+        
+        return(d)
+      }
       uniformalize_density <- function(d){
         # Reorganizes y-values of density function so that 
         # function is monotone increasing to mode
@@ -1263,38 +1285,38 @@ Data_Object_Densities$methods(
         return(new_d)
       }
       
-      MIN_PEPTIDE_LENGTH = 11
-      d <- with(subset(data_subset,  
-                       (PMD_FDR_peptide_length >= MIN_PEPTIDE_LENGTH) & 
-                         (used_to_find_middle == FALSE)), 
-                density(value_of_interest, 
-                        from = ylim[1], 
-                        to   = ylim[2]))
-      d <- normalize_density(   d)
+      local_df <- subset(data_subset,
+                         (PMD_FDR_peptide_length >= MIN_GOOD_PEPTIDE_LENGTH) &
+                           (used_to_find_middle == FALSE))
+      d <- verify_density      (data_subset=local_df, value_field = "value_of_interest", descr_of_df = descr_of_df, ylim=ylim)
+      d <- normalize_density   (d)
       d <- uniformalize_density(d)
       
       return(d)
     }
-    make_true_hit_density <- function(data_groups=NULL){
-      #stop("Data_Object_Densities$make_true_hit_density() is untested beyond here")
+    make_true_hit_density  <- function(data_groups=NULL){
       d_true  <- make_hit_density(data_subset = subset(data_groups, (group_training_class == "good_testing") ),
+                                  descr_of_df = "Good-testing dataset",
                                   ylim        = get_ylim(data_groups))
       return(d_true)
     }
     make_false_hit_density <- function(data_groups=NULL){
       d_false <- make_hit_density(data_subset = subset(data_groups, (group_training_class == "bad_long") ),
+                                  descr_of_df = "Bad-long dataset",
                                   ylim        = get_ylim(data_groups))
       
       return(d_false)
     }
-    add_v_densities <- function(data_groups=NULL, densities=NULL){
-      #stop("Data_Object_Densities$add_v_densities() is untested beyond here")
+    add_v_densities <- function(data_groups=NULL, densities=NULL, field_group = NULL){
       groups <- sort(unique(data_groups$group_of_interest))
       
       new_densities <- densities
       
       for (local_group in groups){
         d_v <- make_hit_density(data_subset = subset(data_groups, (group_of_interest == local_group)),
+                                descr_of_df = sprintf("subset of data (where %s is '%s')", 
+                                                      field_group,
+                                                      local_group),
                                 ylim        = get_ylim(data_groups))
         new_densities[local_group] <- d_v$y
       }
@@ -1304,14 +1326,14 @@ Data_Object_Densities$methods(
     
     # Main section of make_densities()
     df_data_groups <- get_data_groups()$df
-    new_data_groups <- set_values_of_interest(df_data_groups)
+    new_data_groups <- set_values_of_interest(df_data_groups,  field_group = "group_decoy_input_score")
     d_true  <- make_true_hit_density( new_data_groups)
     d_false <- make_false_hit_density(new_data_groups)
     
     densities <- data.frame(x=d_true$x, 
                             t=d_true$y, 
                             f=d_false$y)
-    densities <- add_v_densities(data_groups=new_data_groups, densities=densities)
+    densities <- add_v_densities(data_groups=new_data_groups, densities=densities,  field_group = "group_decoy_input_score")
     df <<- densities
   }
 )
@@ -1424,7 +1446,6 @@ Data_Processor$methods(
 #############################################################
 ####### Classes for Plotting
 #############################################################
-
 ###############################################################################
 #            Class: Plot_Image
 ###############################################################################
@@ -1614,13 +1635,14 @@ Plot_Compare_PMD_and_Norm_Density$methods(
     
     get_densities <- function(data_subset = NULL, var_value = NULL){
       data_subset$value_of_interest <- data_subset[,var_value]
-      from <- min(data_subset$value_of_interest)
-      to   <- max(data_subset$value_of_interest)
+      from <- min(data_subset$value_of_interest, na.rm = TRUE)
+      to   <- max(data_subset$value_of_interest, na.rm = TRUE)
       xlim = range(data_subset$value_of_interest)
       data_true  <- subset(data_subset, (PMD_FDR_decoy==0) & (PMD_FDR_input_score==100))
-      data_false <- subset(data_subset, (PMD_FDR_decoy==1))       
-      d_true  <- with(data_true , density(value_of_interest, from = from, to = to))
-      d_false <- with(data_false, density(value_of_interest, from = from, to = to))
+      data_false <- subset(data_subset, (PMD_FDR_decoy==1))    
+      
+      d_true  <- with(data_true , density(value_of_interest, from = from, to = to, na.rm = TRUE))
+      d_false <- with(data_false, density(value_of_interest, from = from, to = to, na.rm = TRUE))
       d_true  <- normalize_density(d_true)
       d_false <- normalize_density(d_false)
       
@@ -1890,7 +1912,7 @@ Plot_Density_PMD_and_Norm_Decoy_by_AA_Length$methods(
     get_densities <- function(data_subset = NULL, field_value = NULL, field_group=NULL){
       get_density_from_subset <- function(data_subset=NULL, xlim=NULL){
         
-        d_group            <- with(data_subset , density(value_of_interest, from = xlim[1], to = xlim[2]))
+        d_group            <- with(data_subset , density(value_of_interest, from = xlim[1], to = xlim[2], na.rm=TRUE))
         d_group            <- normalize_density(d_group)
         
         return(d_group)
@@ -1900,7 +1922,7 @@ Plot_Density_PMD_and_Norm_Decoy_by_AA_Length$methods(
       data_temp$value_of_interest <- data_temp[[field_value]]
       data_temp$group_of_interest <- data_temp[[field_group]]
       
-      xlim = range(data_temp$value_of_interest)
+      xlim = range(data_temp$value_of_interest, na.rm=TRUE)
       
       groups      <- sort(unique(data_temp$group_of_interest))
       n_groups    <- length(groups)
@@ -2075,7 +2097,7 @@ Plot_Bad_CI$methods(
     
     xlab <- "Precursor Mass Discrepancy (ppm)"
     ylab <- "Proportion of PSMs\nin subgroup"
-    xlim=range(data_decoy$value)
+    xlim=range(data_decoy$value, na.rm = TRUE)
     get_ylim(boxes=boxes)
     if (!include_text){
       xlab=""
@@ -2476,9 +2498,9 @@ Plot_Density_PMD_by_Score$methods(
       
       data_subset <- get_modified_data_groups(var_value=var_value)
       #data_subset$value_of_interest <- data_subset[,var_value]
-      from <- min(data_subset$value_of_interest)
-      to   <- max(data_subset$value_of_interest)
-      xlim = range(data_subset$value_of_interest)     
+      from <- min(data_subset$value_of_interest, na.rm=TRUE)
+      to   <- max(data_subset$value_of_interest, na.rm=TRUE)
+      xlim = range(data_subset$value_of_interest, na.rm=TRUE)     
       
       groups   <- sort(unique(data_subset$group_decoy_input_score), decreasing = TRUE)
       n_groups <- length(groups)
@@ -2489,7 +2511,7 @@ Plot_Density_PMD_by_Score$methods(
         group <- groups[i]
         
         data_group_single  <- subset(data_subset, (group_decoy_input_score == group))
-        d_group            <- with(data_group_single , density(value_of_interest, from = from, to = to))
+        d_group            <- with(data_group_single , density(value_of_interest, from = from, to = to, na.rm = TRUE))
         d_group            <- normalize_density(d_group)
         
         densities[[group]] <- d_group
@@ -2840,7 +2862,6 @@ Plots_for_Paper$methods(
     report_comparison_of_Confidence_and_PMD(i_fdr = i_fdr, min_conf=  0, max_conf=100 , include_max=TRUE)
   }
 )
-
 ###############################################################################
 # C - 021 - PMD-FDR Wrapper - functions.R                                     #
 #                                                                             #
