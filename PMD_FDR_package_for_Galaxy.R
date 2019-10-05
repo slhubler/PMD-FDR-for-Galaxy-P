@@ -19,8 +19,8 @@
 #                    stringr                                                  #
 #                    RUnit                                                    #
 #                                                                             #
-# Release date: 2019-10-04                                                    #
-#      Version: 1.3                                                           #
+# Release date: 2019-10-05                                                    #
+#      Version: 1.4                                                           #
 #                                                                             #
 ###############################################################################
 # Package currently supports the following parameters:
@@ -30,7 +30,6 @@
 # --output_i_fdr          full name and path to the i-FDR output file 
 # --output_g_fdr          full name and path to the g-FDR output file 
 # --output_densities      full name and path to the densities output file 
-# --
 #
 ###############################################################################
 # A - 005 - Parser - ArgParser.R                                              #
@@ -241,6 +240,7 @@ check_field_name = function(input_df = NULL, name_of_input_df=NULL, field_name=N
 #############################################################
 ####### Classes for Data
 #############################################################
+
 ###############################################################################
 #            Class: Data_Object
 ###############################################################################
@@ -308,9 +308,9 @@ Data_Object_Info <- setRefClass("Data_Object_Info",
                                   experiment_name = "character",
                                   designation     = "character",
                                   
-                                  m_input_file_type = "character",
+                                  input_file_type = "character"
                                   
-                                  score_field_name = "character"
+                                  #score_field_name = "character"
                                   #collection_name="character",
                                   #dir_results="character",
                                   #dir_dataset="character",
@@ -338,8 +338,8 @@ Data_Object_Info$methods(
     checkFieldExists("data_path_name")
     checkFieldExists("experiment_name")
     checkFieldExists("designation")
-    checkFieldExists("m_input_file_type")
-    checkFieldExists("score_field_name")
+    checkFieldExists("input_file_type")
+    #checkFieldExists("score_field_name")
   },
   m_load_data = function(){
     # Nothing to do - this is really a data class
@@ -372,34 +372,6 @@ Data_Object_Info$methods(
   collection_name = function(){
     result <- sprintf("%s_%s", experiment_name, designation)
     return(result)
-  },
-  get_field_name_of_score = function(){
-    if (length(score_field_name) == 0){
-      stop("score_field_name has not been set for this project")
-    }
-    return(score_field_name)
-  },
-  set_input_file_type = function(p_input_file_type=NULL){
-    if (p_input_file_type == "PSM_Report"){
-      # do nothing, for now
-    }
-    else if (p_input_file_type == "PMD_FDR_input_file"){
-      score_field_name <<- "PMD_FDR_input_score"
-    }
-    else {
-      stop(sprintf("input_file_type ('%s') is not currently supported - file_type not changed", p_input_file_type))
-    }
-    m_input_file_type <<- p_input_file_type
-  },
-  get_input_file_type = function(){
-    if (length(m_input_file_type) == 0){
-      stop("input_file_type has not been set yet (null string)")
-    }
-    if (m_input_file_type == ""){
-      stop("input_file_type has not been set yet")
-    }
-    
-    return(m_input_file_type)
   }
 )
 ###############################################################################
@@ -412,14 +384,14 @@ Data_Object_Info_737_two_step$methods(
   initialize = function(){
     callSuper()
     class_name                   <<- "Data_Object_Info_737_two_step"
-    score_field_name             <<- "Confidence [%]"
+    #score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- "737_NS_Peptide_Shaker_PSM_Report_Multi_Stage_Two_Step.tabular"
     data_file_name               <<- "737_NS_Peptide_Shaker_Extended_PSM_Report_Multi_Stage_Two_Step.tabular.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Oral_737_NS"
     designation                  <<- "two_step"
     
-    set_input_file_type("PSM_Report")
+    input_file_type              <<- "PSM_Report"
     
     #data_collection_oral_737_NS_combined$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_CombinedDB.tabular"
     #data_collection_oral_737_NS_two_step$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_Multi_Stage_Two_Step.tabular"
@@ -437,14 +409,14 @@ Data_Object_Info_737_combined$methods(
   initialize = function(){
     callSuper()
     class_name                   <<- "Data_Object_Info_737_combined"
-    score_field_name             <<- "Confidence [%]"
+    #score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- "737_NS_Peptide_Shaker_PSM_Report_CombinedDB.tabular"
     data_file_name               <<- "737_NS_Peptide_Shaker_Extended_PSM_Report_CombinedDB.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Oral_737_NS"
     designation                  <<- "two_step"
     
-    set_input_file_type("PSM_Report")
+    input_file_type              <<- "PSM_Report"
     
     #data_collection_oral_737_NS_combined$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_CombinedDB.tabular"
     #data_collection_oral_737_NS_two_step$file_name_dataset_1_percent = "737_NS_Peptide_Shaker_PSM_Report_Multi_Stage_Two_Step.tabular"
@@ -462,14 +434,14 @@ Data_Object_Pyrococcus_tr$methods(
   initialize = function(){
     callSuper()
     class_name                   <<- "Data_Object_Pyrococcus_tr"
-    score_field_name             <<- "Confidence [%]"
+    #score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- ""
     data_file_name               <<- "Pfu_traditional_Extended_PSM_Report.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Pyrococcus"
     designation                  <<- "tr"
     
-    set_input_file_type("PSM_Report")
+    input_file_type              <<- "PSM_Report"
     
   }
 )
@@ -483,14 +455,14 @@ Data_Object_Mouse_Mutations$methods(
   initialize = function(){
     callSuper()
     class_name                   <<- "Data_Object_Mouse_Mutations"
-    score_field_name             <<- "Confidence [%]"
+    #score_field_name             <<- "Confidence [%]"
     data_file_name_1_percent_FDR <<- ""
     data_file_name               <<- "Combined_DB_Mouse_5PTM.tabular"
     data_path_name               <<- file.path(".", "Data")
     experiment_name              <<- "Mouse Mutations"
     designation                  <<- "combined_05"
     
-    set_input_file_type("PSM_Report")
+    input_file_type              <<- "PSM_Report"
     
   }
 )
@@ -511,6 +483,9 @@ Data_Object_Raw_Data$methods(
     if (! safe_file_exists(file_path)){
       stop(sprintf("Raw data file does not exist (%s)", file_path))
     }
+    # BUGBUG: Needs to also check the following:
+    #         - file is tab-delimited
+    #         - first row is a list of column names
   },
   set_info = function(info){
     parents[["info"]] <<- info
@@ -568,11 +543,142 @@ Data_Object_Raw_1_Percent$methods(
   }
 )
 ###############################################################################
+#            Class: Data_Converter
+###############################################################################
+Data_Converter <- setRefClass("Data_Converter", 
+                              fields =list(class_name = "character",
+                                           file_type  = "character"
+                              ) )
+Data_Converter$methods(
+  initialize = function(){
+    class_name <<- "Data_Converter <abstract class - class_name needs to be set in subclass>"
+    file_type  <<- "file_type has not been set before being used <needs to be set in initialize() of subclass>"
+  },
+  check_raw_fields = function(info=NULL, raw_data=NULL){
+    stop(sprintf("check_raw_fields() is an abstract method - define it in %s before calling Data_Object_Data_Converter$load_data()", class_name))
+  },
+  convert_data = function(){
+    stop(sprintf("convert_data() is an abstract method - define it in %s before calling Data_Object_Data_Converter$load_data()", class_name))
+  }
+)
+###############################################################################
+#            Class: Data_Converter_PMD_FDR_input_file
+###############################################################################
+Data_Converter_PMD_FDR_input_file <- setRefClass("Data_Converter_PMD_FDR_input_file", 
+                                                 contains = "Data_Converter",
+                                                 fields =list(
+                                                   
+                                                 ) )
+Data_Converter_PMD_FDR_input_file$methods(
+  initialize = function(){
+    callSuper()
+    
+    class_name <<- "Data_Converter_PMD_FDR_input_file"
+    file_type  <<- "PMD_FDR_file_type"
+  },
+  check_raw_fields = function(info=NULL, raw_data=NULL){
+    data_original <- raw_data$df
+    check_field_name(data_original, "raw_data", "PMD_FDR_input_score")
+    check_field_name(data_original, "raw_data", "PMD_FDR_pmd")
+    check_field_name(data_original, "raw_data", "PMD_FDR_spectrum_file")
+    check_field_name(data_original, "raw_data", "PMD_FDR_proteins")
+    check_field_name(data_original, "raw_data", "PMD_FDR_spectrum_title")
+    check_field_name(data_original, "raw_data", "PMD_FDR_sequence")
+    check_field_name(data_original, "raw_data", "PMD_FDR_decoy")
+  },
+  convert_data = function(info=NULL, raw_data=NULL){
+    data_new <- raw_data$df
+    
+    return(data_new) # Pass through - everything should be in order
+  }
+)
+###############################################################################
+#            Class: Data_Converter_PSM_Report
+###############################################################################
+Data_Converter_PSM_Report <- setRefClass("Data_Converter_PSM_Report", 
+                                         contains = "Data_Converter",
+                                         fields =list(
+                                           
+                                         ) )
+Data_Converter_PSM_Report$methods(
+  initialize = function(){
+    callSuper()
+    
+    class_name <<- "Data_Converter_PSM_Report"
+    file_type  <<- "PSM_Report"
+  },
+  check_raw_fields = function(info=NULL, raw_data=NULL){
+    data_original <- raw_data$df
+    check_field_name(data_original, "raw_data", "Confidence [%]") 
+    check_field_name(data_original, "raw_data", "Precursor m/z Error [ppm]")
+    check_field_name(data_original, "raw_data", "Spectrum File")
+    check_field_name(data_original, "raw_data", "Protein(s)")
+    check_field_name(data_original, "raw_data", "Spectrum Title")
+    check_field_name(data_original, "raw_data", "Decoy")
+    check_field_name(data_original, "raw_data", "Sequence")
+    
+  },
+  convert_data = function(info=NULL, raw_data=NULL){
+    data_new <- raw_data$df
+    
+    data_new$PMD_FDR_input_score    <- data_new[, "Confidence [%]"           ]
+    data_new$PMD_FDR_pmd            <- data_new[, "Precursor m/z Error [ppm]"]
+    data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
+    data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
+    data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
+    data_new$PMD_FDR_sequence       <- data_new[, "Sequence"                 ]
+    data_new$PMD_FDR_decoy          <- data_new[, "Decoy"                    ]
+    
+    return(data_new)
+  }
+)
+###############################################################################
+#            Class: Data_Converter_MaxQuant_Evidence
+###############################################################################
+Data_Converter_MaxQuant_Evidence <- setRefClass("Data_Converter_MaxQuant_Evidence", 
+                                                contains = "Data_Converter",
+                                                fields =list(
+                                                  
+                                                ) )
+Data_Converter_MaxQuant_Evidence$methods(
+  initialize = function(){
+    callSuper()
+    
+    class_name <<- "Data_Converter_MaxQuant_Evidence"
+    file_type  <<- "MaxQuant_Evidence"
+  },
+  check_raw_fields = function(info=NULL, raw_data=NULL){
+    data_original <- raw_data$df
+    
+    check_field_name(data_original, "raw_data", "PEP")
+    check_field_name(data_original, "raw_data", "Mass error [ppm]")
+    check_field_name(data_original, "raw_data", "Proteins")
+    check_field_name(data_original, "raw_data", "Retention time")
+    check_field_name(data_original, "raw_data", "Sequence")
+    check_field_name(data_original, "raw_data", "Reverse")
+  },
+  convert_data = function(info=NULL, raw_data=NULL){
+    data_new <- raw_data$df
+    
+    data_new$PMD_FDR_input_score    <- 100 * (1 - data_new[, "PEP"             ])
+    data_new$PMD_FDR_pmd            <-            data_new[, "Mass error [ppm]"]
+    data_new$PMD_FDR_spectrum_file  <-            "<place_holder - assumes a single spectra file>"
+    data_new$PMD_FDR_proteins       <-            data_new[, "Proteins"        ]
+    data_new$PMD_FDR_spectrum_title <-            data_new[, "Retention time"  ] # Used for ordering peptides - not important in MaxQuant since PMD has already been normalized effectively
+    data_new$PMD_FDR_sequence       <-            data_new[, "Sequence"        ]
+    data_new$PMD_FDR_decoy          <- ifelse(    data_new[, "Reverse"         ] == "+", 1, 0)
+    
+    return(data_new)
+  }
+)
+
+###############################################################################
 #            Class: Data_Object_Data_Converter
 ###############################################################################
 Data_Object_Data_Converter <- setRefClass("Data_Object_Data_Converter", 
                                           contains = "Data_Object",
-                                          fields =list(df = "data.frame"))
+                                          fields =list(df             = "data.frame",
+                                                       data_converter = "Data_Converter"))
 Data_Object_Data_Converter$methods(
   initialize = function(){
     callSuper()
@@ -582,79 +688,33 @@ Data_Object_Data_Converter$methods(
     return(c("PSM_Report", "PMD_FDR_input_file"))
   },
   verify = function(){
-    checkFileTypeSupported = function(){
-      file_type <- get_info()$get_input_file_type()
-      
-      supported_list <- paste0(currently_supported_file_types(), collapse = " ")
-      checkTrue(file_type %in% currently_supported_file_types(),
-                sprintf("File type (%s) is not currently supported in Data_Object_Data_Converter (currently support: %s)",
-                        file_type, supported_list))
-    }
     info     <- get_info()
     raw_data <- get_raw_data()
+    file_type <- get_info()$input_file_type
     
-    file_type <- info$get_input_file_type()
-    
-    checkFileTypeSupported()
-    
-    data_original <- raw_data$df
-    if (file_type == "PSM_Report"){
-      check_field_name(data_original, "raw_data", info$get_field_name_of_score())
-      check_field_name(data_original, "raw_data", "Precursor m/z Error [ppm]")
-      check_field_name(data_original, "raw_data", "Spectrum File")
-      check_field_name(data_original, "raw_data", "Protein(s)")
-      check_field_name(data_original, "raw_data", "Spectrum Title")
-      check_field_name(data_original, "raw_data", "Decoy")
-      check_field_name(data_original, "raw_data", "Sequence")
-    }
-    if (file_type == "PMD_FDR_input_file"){
-      check_field_name(data_original, "raw_data", "PMD_FDR_input_score")
-      check_field_name(data_original, "raw_data", "PMD_FDR_pmd")
-      check_field_name(data_original, "raw_data", "PMD_FDR_spectrum_file")
-      check_field_name(data_original, "raw_data", "PMD_FDR_proteins")
-      check_field_name(data_original, "raw_data", "PMD_FDR_spectrum_title")
-      check_field_name(data_original, "raw_data", "PMD_FDR_sequence")
-      check_field_name(data_original, "raw_data", "PMD_FDR_decoy")
-    }
-    
-    # if (file_type == "PSM_Report"){
-    #   data_new <- raw_data$df
-    #   field_name_of_score <- info$get_field_name_of_score()
-    #   data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
-    #   data_new$PMD_FDR_pmd            <- data_new[, "Precursor m/z Error [ppm]"]
-    #   data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
-    #   data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
-    #   data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
-    # }
+    set_file_type(file_type)
+    data_converter$check_raw_fields(info=info, raw_data=raw_data)
     
   },
   m_load_data = function(){
     
-    info     <- get_info()
-    raw_data <- get_raw_data()
+    info      <- get_info()
+    raw_data  <- get_raw_data()
+    file_type <- get_info()$input_file_type
     
-    file_type <- info$get_input_file_type()
+    df <<- data_converter$convert_data(info=info, raw_data=raw_data)
     
-    if (file_type == "PSM_Report"){
-      data_new <- raw_data$df
-      field_name_of_score <- info$get_field_name_of_score()
-      data_new$PMD_FDR_input_score    <- data_new[,  field_name_of_score       ]
-      data_new$PMD_FDR_pmd            <- data_new[, "Precursor m/z Error [ppm]"]
-      data_new$PMD_FDR_spectrum_file  <- data_new[, "Spectrum File"            ]
-      data_new$PMD_FDR_proteins       <- data_new[, "Protein(s)"               ]
-      data_new$PMD_FDR_spectrum_title <- data_new[, "Spectrum Title"           ]
-      data_new$PMD_FDR_sequence       <- data_new[, "Sequence"                 ]
-      data_new$PMD_FDR_decoy          <- data_new[, "Decoy"                    ]
-      
-      df <<- data_new
+  },
+  set_file_type = function(file_type = NULL){
+    if        (file_type == "PSM_Report"        ){
+      data_converter <<- Data_Converter_PSM_Report        $new()
+    } else if (file_type == "PMD_FDR_input_file"){
+      data_converter <<- Data_Converter_PMD_FDR_input_file$new()
+    } else if (file_type == "MaxQuant_Evidence"){
+      data_converter <<- Data_Converter_MaxQuant_Evidence $new()
+    } else {
+      stop(sprintf("File type '%s' is not currently supported by PMD-FDR module", file_type))
     }
-    else if (file_type == "PMD_FDR_input_file"){
-      df <<- raw_data$df
-    }
-    else {
-      stop(sprintf("Input file type is not currently supported: '%s'", file_type))
-    }
-    
   },
   set_info = function(info){
     parents[["info"]] <<- info
@@ -706,7 +766,7 @@ Data_Object_Groupings$methods(
         
         info <- get_info()
         info$ensure()
-        field_name_of_score <- info$get_field_name_of_score()
+        #field_name_of_score <- info$get_field_name_of_score()
         
         # #data_new <- rename_column(data_new, "Variable Modifications"   , "ptm_list")
         # data_new <- rename_column(data_new, field_name_of_score        , "PMD_FDR_input_score")
@@ -1446,6 +1506,7 @@ Data_Processor$methods(
 #############################################################
 ####### Classes for Plotting
 #############################################################
+
 ###############################################################################
 #            Class: Plot_Image
 ###############################################################################
@@ -2883,7 +2944,7 @@ ModuleArgParser_PMD_FDR$methods(
     local_add_argument("--output_i_fdr"        , default = ""                  , help="full name and path to the i-FDR output file ")
     local_add_argument("--output_g_fdr"        , default = ""                  , help="full name and path to the g-FDR output file ")
     local_add_argument("--output_densities"    , default = ""                  , help="full name and path to the densities output file ")
-    local_add_argument("--score_field_name"    , default = ""                  , help="name of score field (in R format)")
+    #local_add_argument("--score_field_name"    , default = ""                  , help="name of score field (in R format)")
     local_add_argument("--input_file_type"     , default = "PMD_FDR_input_file", help="type of input file (currently supports: PSM_Report)")
   }
 )
@@ -2949,7 +3010,7 @@ Data_Object_Info_Parser$methods(
     check_field_exists("output_i_fdr"        , check_empty = FALSE)
     check_field_exists("output_g_fdr"        , check_empty = FALSE)
     check_field_exists("output_densities"    , check_empty = FALSE)
-    check_field_exists("score_field_name")
+    #check_field_exists("score_field_name")
     check_field_exists("input_file_type")
   },
   m_load_data = function(){
@@ -2964,8 +3025,8 @@ Data_Object_Info_Parser$methods(
     output_g_fdr                 <<- as.character(parsing_results["output_g_fdr"])
     output_densities             <<- as.character(parsing_results["output_densities"])
     
-    score_field_name             <<- as.character(parsing_results["score_field_name"])
-    set_input_file_type(             as.character(parsing_results["input_file_type"]))
+    input_file_type              <<- as.character(parsing_results["input_file_type"])
+    #score_field_name             <<- as.character(parsing_results["score_field_name"])
   },
   set_parser = function(parser){
     parents[["parser"]] <<- parser
@@ -3001,34 +3062,6 @@ Data_Object_Info_Parser$methods(
   collection_name = function(){
     result <- ""
     return(result)
-  },
-  get_field_name_of_score = function(){
-    if (length(score_field_name) == 0){
-      stop("score_field_name has not been set for this project")
-    }
-    return(score_field_name)
-  },
-  set_input_file_type = function(p_input_file_type=NULL){
-    if (p_input_file_type == "PSM_Report"){
-      # do nothing, for now
-    }
-    else if (p_input_file_type == "PMD_FDR_input_file"){
-      score_field_name <<- "PMD_FDR_input_score"
-    }
-    else {
-      stop(sprintf("input_file_type ('%s') is not currently supported - file_type not changed", p_input_file_type))
-    }
-    m_input_file_type <<- p_input_file_type
-  },
-  get_input_file_type = function(){
-    if (length(m_input_file_type) == 0){
-      stop("input_file_type has not been set yet (null string)")
-    }
-    if (m_input_file_type == ""){
-      stop("input_file_type has not been set yet")
-    }
-    
-    return(m_input_file_type)
   }
   
 )
